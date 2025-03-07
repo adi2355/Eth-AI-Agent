@@ -1,0 +1,4780 @@
+
+
+================================================================================
+File: .bolt/config.json
+================================================================================
+
+{
+  "template": "nextjs-shadcn"
+}
+
+
+================================================================================
+File: app/api/auth/nonce/route.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import { storeNonce } from '@/lib/auth';
+
+export async function POST(req: Request) {
+  try {
+    const { address } = await req.json();
+    const nonce = storeNonce(address);
+    
+    return NextResponse.json({ nonce });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to generate nonce' },
+      { status: 500 }
+    );
+  }
+}
+
+================================================================================
+File: app/api/auth/verify/route.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import { verifySignature, generateToken } from '@/lib/auth';
+
+export async function POST(req: Request) {
+  try {
+    const { message, signature, address } = await req.json();
+    
+    const user = await verifySignature(message, signature, address);
+    const token = generateToken(user);
+    
+    return NextResponse.json({ token });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Authentication failed' },
+      { status: 401 }
+    );
+  }
+}
+
+================================================================================
+File: app/api/blockchain-query/route.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import { AgentOrchestrator } from '@/lib/orchestrator';
+
+const corsHeaders = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const orchestrator = new AgentOrchestrator();
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+export async function POST(req: Request) {
+  try {
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const { query, sessionId } = body;
+    
+    if (!query?.trim()) {
+      return NextResponse.json(
+        { error: 'Query is required' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const result = await orchestrator.processQuery(query, sessionId);
+
+    return NextResponse.json(result, { 
+      status: 200, 
+      headers: corsHeaders 
+    });
+
+  } catch (error) {
+    console.error('API Error:', error);
+    
+    return NextResponse.json(
+      { 
+        error: error instanceof Error ? error.message : 'Failed to process request' 
+      },
+      { status: 500, headers: corsHeaders }
+    );
+  }
+}
+
+================================================================================
+File: app/api/chat/route.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import { AgentOrchestrator } from '@/lib/orchestrator';
+
+const orchestrator = new AgentOrchestrator();
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const corsHeaders = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+export async function POST(req: Request) {
+  console.log('Chat API: Starting request processing');
+  console.log('Headers:', Object.fromEntries(req.headers.entries()));
+
+  try {
+    let body;
+    try {
+      const text = await req.text();
+      console.log('Raw request body:', text);
+      body = JSON.parse(text);
+      console.log('Chat API: Request body parsed:', body);
+    } catch (error) {
+      console.error('Chat API: JSON parsing error:', error);
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const { query, sessionId } = body;
+
+    console.log('Chat API: Extracted sessionId:', sessionId);
+    console.log('Chat API: Extracted query:', query);
+
+    if (!query?.trim()) {
+      console.log('Chat API: Empty query received');
+      return NextResponse.json(
+        { error: 'Query is required' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    if (!sessionId?.trim()) {
+      console.log('Chat API: No sessionId received');
+      return NextResponse.json(
+        { 
+          error: 'Session ID is required',
+          debug: { 
+            body,
+            headers: Object.fromEntries(req.headers.entries())
+          }
+        },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    console.log('Chat API: Starting chat pipeline for query:', query);
+    console.log('Chat API: Using session ID:', sessionId);
+
+    const result = await orchestrator.processQuery(query, sessionId);
+
+    console.log('Chat API: Pipeline complete. Analysis:', result.analysis.classification.primaryIntent);
+    console.log('Chat API: Generated response:', result.response);
+
+    return NextResponse.json(
+      {
+        response: result.response,
+        data: result.aggregatorData,
+        analysis: result.analysis,
+        suggestions: result.suggestions,
+        contextAnalysis: result.contextAnalysis
+      },
+      { status: 200, headers: corsHeaders }
+    );
+  } catch (error) {
+    console.error('Chat API error:', error);
+
+    let errorMessage = 'Failed to process chat request';
+    let statusCode = 500;
+
+    if (error instanceof Error) {
+      if (error.message.includes('API key')) {
+        errorMessage = 'Service configuration error';
+        statusCode = 503;
+      } else if (error.message.includes('rate limit')) {
+        errorMessage = 'Service is busy, please try again in a moment';
+        statusCode = 429;
+      } else if (error.message.includes('validation')) {
+        errorMessage = error.message;
+        statusCode = 400;
+      } else if (error.message.includes('Session ID is required')) {
+        errorMessage = 'Session ID is required for conversation memory';
+        statusCode = 400;
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: statusCode, headers: corsHeaders }
+    );
+  }
+}
+
+================================================================================
+File: app/api/token-data/route.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import { getTrendingTokens, getTokenPrices } from '@/lib/token-data';
+import { withRateLimit } from '@/lib/rate-limit';
+import { withAuth } from '@/lib/middleware';
+
+const handler = withAuth(
+  withRateLimit(async (req: Request) => {
+    try {
+      const trendingTokens = await getTrendingTokens();
+      const tokenIds = trendingTokens.map(trend => trend.item.id);
+      const tokenPrices = await getTokenPrices(tokenIds);
+
+      const enrichedTrends = trendingTokens.map(trend => ({
+        ...trend,
+        price_data: tokenPrices[trend.item.id] || null,
+      }));
+
+      return NextResponse.json({ data: enrichedTrends });
+    } catch (error) {
+      console.error('Token data error:', error);
+      return NextResponse.json(
+        { error: 'Failed to fetch token data' },
+        { status: 500 }
+      );
+    }
+  })
+);
+
+export { handler as GET };
+
+================================================================================
+File: components/ChatInterface.tsx
+================================================================================
+
+"use client";
+
+import React, { useState, useRef, useEffect } from 'react';
+import { Bot, Send, Loader2, RefreshCcw, ChevronDown, AlertCircle, Info } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { v4 as uuidv4 } from 'uuid';
+
+interface ErrorAlert {
+  type: 'rate-limit' | 'api-error' | 'not-found' | 'network' | 'unknown';
+  message: string;
+  suggestion?: string;
+  retryable: boolean;
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  error?: ErrorAlert;
+  data?: any;
+  suggestions?: string[];
+  contextAnalysis?: {
+    isCoherent: boolean;
+    confidence: number;
+  };
+}
+
+const ErrorAlertComponent = ({ error, onRetry }: { error: ErrorAlert; onRetry?: () => void }) => (
+  <Alert variant="destructive" className="mb-4">
+    <AlertCircle className="h-4 w-4" />
+    <AlertDescription className="flex items-center justify-between">
+      <div>
+        <p className="font-medium">{error.message}</p>
+        {error.suggestion && (
+          <p className="text-sm mt-1 text-muted-foreground">{error.suggestion}</p>
+        )}
+      </div>
+      {error.retryable && onRetry && (
+        <Button variant="outline" size="sm" onClick={onRetry} className="ml-4">
+          <RefreshCcw className="h-4 w-4 mr-2" />
+          Retry
+        </Button>
+      )}
+    </AlertDescription>
+  </Alert>
+);
+
+const MessageComponent = ({ 
+  message, 
+  onRetry, 
+  onSuggestionClick 
+}: { 
+  message: Message; 
+  onRetry: () => void;
+  onSuggestionClick: (suggestion: string) => void;
+}) => {
+  const isError = message.error || message.type === 'error';
+  const hasApiSource = message.data?.source === 'coingecko' || message.data?.source === 'coinmarketcap';
+
+  const messageClasses = [
+    "max-w-[80%] rounded-lg px-4 py-2",
+    message.role === 'user' 
+      ? "bg-primary text-primary-foreground" 
+      : isError 
+        ? "bg-destructive/10 text-destructive" 
+        : "bg-muted"
+  ].join(' ');
+
+  const containerClasses = [
+    "flex gap-2",
+    message.role === 'user' ? "justify-end" : "justify-start"
+  ].join(' ');
+
+  return (
+    <div className={containerClasses}>
+      {message.role === 'assistant' && (
+        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+          <Bot className="h-4 w-4" />
+        </div>
+      )}
+      <div className={messageClasses}>
+        <p className="whitespace-pre-wrap">{message.content}</p>
+        
+        {hasApiSource && (
+          <div className="flex items-center gap-1 text-xs opacity-70 mt-1">
+            <Info className="h-3 w-3" />
+            <span>Data source: {message.data.source}</span>
+          </div>
+        )}
+
+        {message.contextAnalysis && (
+          <div className="flex items-center gap-2 text-xs opacity-70 mt-1 border-t pt-1">
+            {message.contextAnalysis.isCoherent ? (
+              <>
+                <span className="text-green-500">✓</span>
+                <span>Context aligned</span>
+                <span className="text-muted-foreground">
+                  ({(message.contextAnalysis.confidence * 100).toFixed(0)}% confidence)
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-yellow-500">⚠</span>
+                <span>Context shift detected</span>
+                <span className="text-muted-foreground">
+                  ({(message.contextAnalysis.confidence * 100).toFixed(0)}% confidence)
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        <p className="text-xs opacity-70 mt-1">
+          {message.timestamp.toLocaleTimeString()}
+        </p>
+
+        {isError && message.error?.retryable && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRetry}
+            className="mt-2"
+          >
+            <RefreshCcw className="h-4 w-4 mr-2" />
+            Retry
+          </Button>
+        )}
+
+        {message.suggestions && message.suggestions.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <p className="text-sm font-medium">Suggested queries:</p>
+            <div className="flex flex-wrap gap-2">
+              {message.suggestions.map((suggestion, i) => (
+                <Button
+                  key={i}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onSuggestionClick(suggestion)}
+                >
+                  {suggestion}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const QUICK_QUERIES = [
+  {
+    label: 'Bitcoin price',
+    query: 'What is the current price of Bitcoin?',
+  },
+  {
+    label: 'ETH price',
+    query: 'What is the current price of Ethereum?',
+  },
+  {
+    label: 'Compare BTC & ETH',
+    query: 'Compare Bitcoin and Ethereum prices',
+  },
+];
+
+export function ChatInterface() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  useEffect(() => {
+    // Initialize session with UUID
+    setSessionId(uuidv4());
+  }, []);
+
+  const handleError = (error: unknown): ErrorAlert => {
+    if (error instanceof Error) {
+      // Rate limit errors
+      if (error.message.includes('rate limit')) {
+        return {
+          type: 'rate-limit',
+          message: 'API rate limit exceeded',
+          suggestion: 'Please wait a moment before trying again',
+          retryable: true
+        };
+      }
+      
+      // API configuration errors
+      if (error.message.includes('API key')) {
+        return {
+          type: 'api-error',
+          message: 'Service configuration error',
+          suggestion: 'Please contact support if this persists',
+          retryable: false
+        };
+      }
+
+      // Not found errors
+      if (error.message.includes('not found') || error.message.includes('No data available')) {
+        return {
+          type: 'not-found',
+          message: 'Token not found',
+          suggestion: 'Try checking the token symbol or searching for a different token',
+          retryable: false
+        };
+      }
+
+      // Network errors
+      if (error.message.includes('network') || error.message.includes('ECONNRESET')) {
+        return {
+          type: 'network',
+          message: 'Network connection error',
+          suggestion: 'Please check your internet connection',
+          retryable: true
+        };
+      }
+
+      return {
+        type: 'unknown',
+        message: error.message,
+        retryable: true
+      };
+    }
+
+    return {
+      type: 'unknown',
+      message: 'An unexpected error occurred',
+      retryable: true
+    };
+  };
+
+  const handleSubmit = async (e: React.FormEvent | string, isRetry = false) => {
+    e?.preventDefault?.();
+    const queryText = typeof e === 'string' ? e : input;
+    
+    if (!queryText.trim() || !sessionId || isLoading) return;
+
+    if (!isRetry) {
+      setRetryCount(0);
+    }
+
+    const userMessage: Message = {
+      role: 'user',
+      content: queryText,
+      timestamp: new Date(),
+    };
+
+    if (!isRetry) {
+      setMessages(prev => [...prev, userMessage]);
+    }
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          query: queryText,
+          sessionId
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `Server error: ${response.status}` }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: data.response,
+        timestamp: new Date(),
+        data: data.data,
+        suggestions: data.suggestions,
+        contextAnalysis: data.contextAnalysis
+      };
+
+      setMessages(prev => {
+        if (isRetry) {
+          return [...prev.slice(0, -1), assistantMessage];
+        }
+        return [...prev, assistantMessage];
+      });
+    } catch (error) {
+      const errorAlert = handleError(error);
+      
+      const errorMessage: Message = {
+        role: 'assistant',
+        content: errorAlert.message + (errorAlert.suggestion ? `\n\n${errorAlert.suggestion}` : ''),
+        timestamp: new Date(),
+        error: errorAlert,
+      };
+
+      setMessages(prev => {
+        if (isRetry) {
+          return [...prev.slice(0, -1), errorMessage];
+        }
+        return [...prev, errorMessage];
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    handleSubmit(suggestion);
+  };
+
+  return (
+    <Card className="h-[calc(100vh-12rem)]">
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Bot className="h-5 w-5" />
+          Blockchain Assistant
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col h-[calc(100%-5rem)]">
+        <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-4">
+          {messages.length === 0 && (
+            <div className="text-center text-muted-foreground p-4">
+              <p>👋 Hi! I can help you explore blockchain data.</p>
+              <p className="mt-2">Try asking about token prices or market trends.</p>
+            </div>
+          )}
+          {messages.map((message, index) => (
+            <MessageComponent
+              key={index}
+              message={message}
+              onRetry={() => handleSubmit(messages[messages.length - 2].content, true)}
+              onSuggestionClick={handleSuggestionClick}
+            />
+          ))}
+          {isLoading && (
+            <div className="flex gap-2">
+              <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                <Bot className="h-4 w-4" />
+              </div>
+              <div className="bg-muted rounded-lg px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <p>Processing your request...</p>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+        <div className="border-t pt-4 px-4">
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {QUICK_QUERIES.map((item, index) => (
+                  <DropdownMenuItem
+                    key={index}
+                    onClick={() => handleSubmit(item.query)}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask about token prices or trends (e.g., 'What is Bitcoin's price?')"
+              disabled={isLoading}
+              className="flex-1"
+            />
+            <Button type="submit" disabled={isLoading || !input.trim()}>
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+================================================================================
+File: components/ErrorBoundary.tsx
+================================================================================
+
+"use client";
+
+import React from 'react';
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { AlertCircle, RefreshCcw, Home } from 'lucide-react';
+import Link from 'next/link';
+
+interface Props {
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // Log error to monitoring service
+    console.error('Error caught by boundary:', error, errorInfo);
+  }
+
+  private handleReset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      return (
+        <Card className="max-w-lg mx-auto my-8 shadow-lg">
+          <CardHeader className="space-y-1">
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-5 w-5" />
+              Something went wrong
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-muted-foreground">
+              {process.env.NODE_ENV === 'development' 
+                ? this.state.error?.message || 'An unexpected error occurred'
+                : 'An unexpected error occurred. Our team has been notified.'}
+            </p>
+            {process.env.NODE_ENV === 'development' && this.state.error?.stack && (
+              <pre className="p-4 bg-muted rounded-lg text-xs overflow-auto max-h-[200px]">
+                {this.state.error.stack}
+              </pre>
+            )}
+          </CardContent>
+          <CardFooter className="flex gap-2">
+            <Button
+              onClick={() => window.location.reload()}
+              variant="default"
+              size="sm"
+            >
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+            <Link href="/" passHref>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={this.handleReset}
+              >
+                <Home className="h-4 w-4 mr-2" />
+                Back to Home
+              </Button>
+            </Link>
+          </CardFooter>
+        </Card>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+================================================================================
+File: lib/agents/aggregator.ts
+================================================================================
+
+import { RobustAnalysis, AggregatorSpec } from './types';
+import { getTokenDetails, getTokenPrices } from '@/lib/token-data';
+
+export async function buildAggregatorCalls(analysis: RobustAnalysis): Promise<AggregatorSpec> {
+  console.log('buildAggregatorCalls: Starting with analysis:', {
+    primaryIntent: analysis.classification.primaryIntent,
+    tokens: analysis.queryAnalysis.detectedTokens,
+    needsApiCall: analysis.classification.needsApiCall
+  });
+
+  const spec: AggregatorSpec = {
+    primary: {},
+    fallback: {}
+  };
+
+  // Handle different intent types
+  switch (analysis.classification.primaryIntent) {
+    case 'MARKET_DATA':
+    case 'COMPARISON':
+    case 'DEFI':
+      // Market data logic with actual API calls
+      if (analysis.classification.needsApiCall) {
+        spec.primary.coingecko = {
+          method: 'GET',
+          tokens: analysis.queryAnalysis.detectedTokens,
+          timeframe: analysis.queryAnalysis.timeContext || 'current'
+        };
+      }
+      break;
+
+    case 'NEWS_EVENTS':
+    case 'REGULATORY':
+      if (analysis.classification.requiresWebSearch) {
+        const contentTypes = analysis.dataRequirements.newsData?.types || ['announcement'];
+        const timeRange = analysis.dataRequirements.newsData?.timeRange;
+        
+        spec.primary.news = {
+          method: 'GET',
+          contentTypes,
+          timeRange,
+          tokens: analysis.queryAnalysis.detectedTokens
+        };
+
+        // Add regulatory data requirements if needed
+        if (analysis.classification.primaryIntent === 'REGULATORY') {
+          spec.primary.regulatory = {
+            method: 'GET',
+            jurisdiction: 'global',
+            timeRange
+          };
+        }
+      }
+      break;
+
+    case 'SECURITY':
+      if (analysis.classification.requiresWebSearch) {
+        spec.primary.security = {
+          method: 'GET',
+          contentTypes: ['security_incident'],
+          tokens: analysis.queryAnalysis.detectedTokens
+        };
+      }
+      break;
+  }
+
+  return spec;
+}
+
+export async function executeAggregatorCalls(spec: AggregatorSpec) {
+  console.log('executeAggregatorCalls: Starting with spec:', spec);
+  const results: Record<string, any> = {
+    primary: {},
+    fallback: {}
+  };
+
+  try {
+    // Handle CoinGecko data requests
+    if (spec.primary.coingecko) {
+      const { tokens } = spec.primary.coingecko;
+      
+      // Get token details for each token
+      const tokenDetails = await Promise.all(
+        tokens.map(token => getTokenDetails(token))
+      );
+      
+      // Get token prices
+      const tokenIds = tokenDetails
+        .filter(detail => detail !== null)
+        .map(detail => detail!.id);
+      
+      const prices = await getTokenPrices(tokenIds);
+      
+      results.primary.coingecko = {
+        tokenDetails,
+        prices
+      };
+    }
+
+    // Handle news data requests
+    if (spec.primary.news) {
+      // News data would be handled by a separate service
+      // For now, we'll return a placeholder
+      results.primary.news = {
+        status: 'success',
+        message: 'News data would be fetched here'
+      };
+    }
+
+    // Handle regulatory data requests
+    if (spec.primary.regulatory) {
+      // Regulatory data would be handled by a separate service
+      // For now, we'll return a placeholder
+      results.primary.regulatory = {
+        status: 'success',
+        message: 'Regulatory data would be fetched here'
+      };
+    }
+
+    // Handle security data requests
+    if (spec.primary.security) {
+      // Security data would be handled by a separate service
+      // For now, we'll return a placeholder
+      results.primary.security = {
+        status: 'success',
+        message: 'Security data would be fetched here'
+      };
+    }
+
+  } catch (error) {
+    console.error('Error executing aggregator calls:', error);
+    results.error = error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  return results;
+}
+
+================================================================================
+File: lib/agents/index.ts
+================================================================================
+
+export { analyzeUserQuery } from './intent';
+export { buildAggregatorCalls, executeAggregatorCalls } from './aggregator';
+export { generateSummary } from './summarization';
+export * from './types';
+
+================================================================================
+File: lib/agents/intent.ts
+================================================================================
+
+import { Configuration, OpenAIApi } from 'openai';
+import { RobustAnalysis, Agent1Input, PreprocessingStep, QueryMetadata } from './types';
+import { validateAnalysis, validateLLMResponse, PreprocessingError, LLMError } from './validation';
+
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+let openai: OpenAIApi | null = null;
+
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OpenAI API key is not configured');
+    }
+    
+    const configuration = new Configuration({ apiKey });
+    openai = new OpenAIApi(configuration);
+  }
+  return openai;
+}
+
+const SYSTEM_PROMPT = `You are an advanced blockchain and cryptocurrency analysis system specializing in intent classification. Your task is to analyze and categorize user queries across multiple domains while being resilient to ambiguous, malformed, or complex inputs.
+
+CLASSIFICATION CATEGORIES:
+
+1. MARKET_DATA
+   - Price inquiries and market statistics
+   - Trading volume and liquidity information
+   - Market cap and supply metrics
+   - Historical price data requests
+   Examples: "What's BTC price?", "Show ETH trading volume"
+
+2. COMPARISON
+   - Direct token comparisons
+   - Performance analysis between assets
+   - Market metric comparisons
+   - Technology or feature comparisons
+   Examples: "Compare BTC and ETH", "Which has better performance?"
+
+3. TECHNICAL
+   - Smart contract inquiries
+   - Blockchain architecture questions
+   - Protocol specifications
+   - Development and implementation
+   Examples: "How do ERC20 tokens work?", "Explain Ethereum's consensus"
+
+4. DEFI
+   - Yield farming and liquidity
+   - Lending protocols
+   - DEX mechanics
+   - Tokenomics
+   Examples: "How does liquidity mining work?", "Explain impermanent loss"
+
+5. REGULATORY
+   - Legal and compliance questions
+   - Regulatory updates
+   - Policy impact analysis
+   - Jurisdictional inquiries
+   Examples: "Latest crypto regulations", "Is mining legal in China?"
+
+6. NEWS_EVENTS
+   - Recent developments
+   - Project updates
+   - Market events
+   - Industry announcements
+   Examples: "Latest Bitcoin news", "Updates on ETH merge"
+
+7. SECURITY
+   - Network security
+   - Wallet safety
+   - Smart contract audits
+   - Attack vectors and risks
+   Examples: "Is hardware wallet safe?", "Common DeFi exploits"
+
+8. CONCEPTUAL
+   - Basic blockchain concepts
+   - Cryptocurrency fundamentals
+   - General educational queries
+   Examples: "What are gas fees?", "How does mining work?"
+
+9. HYBRID
+   - Queries spanning multiple categories
+   - Complex multi-part questions
+   Example: "Compare ETH price and explain smart contracts"
+
+10. NEEDS_CONTEXT
+    - Ambiguous queries
+    - Incomplete information
+    - Context-dependent questions
+    Example: "Is it better?", "What's the difference?"
+
+DETECTION RULES:
+
+1. Token Detection:
+   - Common tokens: BTC, ETH, SOL, DOGE, ADA, BNB, XRP, DOT, MATIC, AVAX, LINK, UNI, ATOM, LTC
+   - Special cases: LUNA -> terra-luna-2, LUNC -> terra-luna
+   - Handle both symbols and full names: Bitcoin, Ethereum, etc.
+   - Process token pairs in comparisons
+   - Maximum 5 tokens per query
+   - Normalize token names consistently
+
+2. Intent Analysis:
+   - Primary intent based on strongest category match
+   - Secondary intents for hybrid queries
+   - Confidence level assessment
+   - Ambiguity detection
+
+3. Market Indicators:
+   - Price-related terms
+   - Volume and liquidity metrics
+   - Trading signals
+   - Technical analysis terms
+
+4. Conceptual Indicators:
+   - Educational keywords
+   - Definition requests
+   - How-to questions
+   - Explanation markers
+
+5. Time Context:
+   - Current vs historical
+   - Specific timeframes
+   - Trend analysis periods
+   - Future predictions
+
+CRITICAL RESPONSE REQUIREMENTS:
+
+Return a valid JSON response with EXACTLY this structure:
+
+{
+  "classification": {
+    "primaryIntent": "MARKET_DATA" | "COMPARISON" | "TECHNICAL" | "DEFI" | 
+                    "REGULATORY" | "NEWS_EVENTS" | "SECURITY" | "CONCEPTUAL" | 
+                    "HYBRID" | "NEEDS_CONTEXT",
+    "confidence": <number between 0 and 1>,
+    "needsApiCall": <boolean>,
+    "ambiguityLevel": "LOW" | "MEDIUM" | "HIGH",
+    "requiresWebSearch": <boolean>
+  },
+  "queryAnalysis": {
+    "sanitizedQuery": <string>,
+    "detectedTokens": <string[]>,
+    "comparisonRequest": {
+      "isComparison": <boolean>,
+      "tokens": <string[]>,
+      "aspects": <string[]>,
+      "primaryMetric": <string | null>
+    },
+    "detectedIntents": <string[]>,
+    "timeContext": "current" | "24h" | "7d" | "30d" | null,
+    "marketIndicators": <string[]>,
+    "conceptualIndicators": <string[]>,
+    "webSearchContext": {
+      "needed": <boolean>,
+      "reason": <string | null>,
+      "suggestedQueries": <string[]>
+    }
+  },
+  "dataRequirements": {
+    "marketData": {
+      "needed": <boolean>,
+      "types": <string[]>,
+      "timeframe": "current" | "24h" | "7d" | "30d" | null,
+      "tokenCount": <number>
+    },
+    "conceptualData": {
+      "needed": <boolean>,
+      "aspects": <string[]>
+    }
+  }
+}
+
+CRITICAL REQUIREMENTS:
+1. ALWAYS include ALL fields exactly as shown above
+2. NEVER omit any fields or change the structure
+3. ALWAYS validate token count <= 5
+4. ENSURE all string arrays contain valid strings
+5. SET needsApiCall=true for any market data requests
+6. SET requiresWebSearch=true for news/regulatory queries
+7. INCLUDE clear reason when webSearchContext.needed=true
+8. VALIDATE all enums match specified values exactly
+9. For market data:
+   - Set tokenCount accurately
+   - Include all required data types
+   - Set timeframe appropriately
+10. For comparisons:
+    - Set comparisonRequest.isComparison = true
+    - Include all detected tokens in comparisonRequest.tokens
+    - List relevant aspects in comparisonRequest.aspects
+    - Set primaryMetric based on query focus
+11. For news/regulatory/security queries:
+    - Set requiresWebSearch = true
+    - Include clear reason in webSearchContext
+    - Provide relevant suggestedQueries
+12. For conceptual/technical queries:
+    - Set marketData.needed = false
+    - Set marketData.tokenCount = 0
+    - Include relevant aspects in conceptualData`;
+
+function preprocessQuery(query: string): PreprocessingStep[] {
+  const steps: PreprocessingStep[] = [];
+  
+  try {
+    if (!query?.trim()) {
+      throw new PreprocessingError('Empty query', 'sanitize');
+    }
+
+    let processed = query.trim();
+    steps.push({
+      operation: 'sanitize',
+      input: query,
+      output: processed
+    });
+
+    processed = processed.toLowerCase();
+    const tokenMappings: Record<string, string> = {
+      'btc': 'bitcoin',
+      'eth': 'ethereum',
+      'sol': 'solana',
+      'doge': 'dogecoin',
+      'ada': 'cardano',
+      'bnb': 'binancecoin',
+      'xrp': 'ripple',
+      'dot': 'polkadot',
+      'matic': 'polygon',
+      'avax': 'avalanche-2',
+      'link': 'chainlink',
+      'uni': 'uniswap',
+      'atom': 'cosmos',
+      'ltc': 'litecoin',
+      'luna': 'terra-luna-2',
+      'lunc': 'terra-luna'
+    };
+
+    for (const [abbr, full] of Object.entries(tokenMappings)) {
+      processed = processed.replace(new RegExp(`\\b${abbr}\\b`, 'g'), full);
+    }
+    steps.push({
+      operation: 'normalize_tokens',
+      input: processed,
+      output: processed
+    });
+
+    return steps;
+  } catch (error) {
+    if (error instanceof PreprocessingError) {
+      throw error;
+    }
+    throw new PreprocessingError(
+      'Preprocessing failed',
+      'unknown',
+      query
+    );
+  }
+}
+
+function extractMetadata(query: string, steps: PreprocessingStep[]): QueryMetadata {
+  try {
+    const processedQuery = steps[steps.length - 1].output;
+    
+    const commonTokens = [
+      'bitcoin', 'ethereum', 'solana', 'dogecoin', 'cardano',
+      'binancecoin', 'ripple', 'polkadot', 'polygon', 'avalanche-2',
+      'chainlink', 'uniswap', 'cosmos', 'litecoin', 'terra-luna-2',
+      'terra-luna'
+    ];
+
+    const tokens = processedQuery
+      .split(/\s+/)
+      .filter(token => 
+        token.length > 1 && 
+        !['price', 'show', 'me', 'what', 'is', 'the', 'of', 'and', 'vs', 'versus', 'compare'].includes(token)
+      );
+
+    const uniqueTokens = Array.from(new Set(tokens))
+      .filter(token => 
+        commonTokens.includes(token) || 
+        /^[a-z0-9]+$/.test(token)
+      )
+      .slice(0, 5);
+
+    const hints = [];
+    if (query.includes('price')) hints.push('PRICE_QUERY');
+    if (query.includes('compare') || query.includes('vs') || query.includes('versus')) hints.push('COMPARISON');
+    if (query.includes('trend')) hints.push('TREND_ANALYSIS');
+    if (query.includes('how') || query.includes('what')) hints.push('EDUCATIONAL');
+    if (uniqueTokens.length > 1) hints.push('MULTI_TOKEN');
+    if (query.includes('news') || query.includes('latest')) hints.push('NEWS');
+    if (query.includes('regulation') || query.includes('legal')) hints.push('REGULATORY');
+    if (query.includes('security') || query.includes('safe')) hints.push('SECURITY');
+    if (query.includes('defi') || query.includes('yield')) hints.push('DEFI');
+
+    return {
+      tokens: uniqueTokens,
+      entities: uniqueTokens.filter(token => commonTokens.includes(token)),
+      contextualHints: hints
+    };
+  } catch (error) {
+    throw new PreprocessingError(
+      'Metadata extraction failed',
+      'metadata',
+      query
+    );
+  }
+}
+
+async function retryWithExponentialBackoff<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  initialDelay: number = 1000
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      
+      if (error instanceof Error && error.message.includes('rate limit')) {
+        const delay = initialDelay * Math.pow(2, i);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      throw error;
+    }
+  }
+  
+  throw lastError || new Error('Operation failed after retries');
+}
+
+export async function analyzeUserQuery(input: Agent1Input): Promise<RobustAnalysis> {
+  try {
+    const startTime = Date.now();
+    const preprocessingSteps = preprocessQuery(input.query);
+    const metadata = extractMetadata(input.query, preprocessingSteps);
+
+    const client = getOpenAIClient();
+    const completion = await retryWithExponentialBackoff(async () => {
+      return client.createChatCompletion({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: preprocessingSteps[preprocessingSteps.length - 1].output }
+        ],
+        temperature: 0.1,
+        max_tokens: 1000,
+      });
+    });
+
+    const response = completion.data.choices[0]?.message?.content;
+    if (!response) {
+      throw new LLMError('No response from OpenAI');
+    }
+
+    const parsedResponse = validateLLMResponse(response);
+    
+    const analysis: RobustAnalysis = {
+      originalContext: {
+        rawQuery: input.query,
+        timestamp: startTime,
+        preprocessingSteps,
+        metadata
+      },
+      classification: parsedResponse.classification,
+      queryAnalysis: parsedResponse.queryAnalysis,
+      dataRequirements: parsedResponse.dataRequirements
+    };
+
+    validateAnalysis(analysis);
+
+    return analysis;
+
+  } catch (error) {
+    console.error('Intent analysis error:', error);
+    
+    if (error instanceof PreprocessingError) {
+      throw new Error(`Preprocessing failed at ${error.step}: ${error.message}`);
+    }
+    if (error instanceof LLMError) {
+      throw new Error(`LLM error: ${error.message}`);
+    }
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Unknown error during analysis');
+  }
+}
+
+================================================================================
+File: lib/agents/regulatory.ts
+================================================================================
+
+import { TokenCache } from './token-cache';
+
+interface RegulatoryUpdate {
+  id: string;
+  title: string;
+  summary: string;
+  jurisdiction: string;
+  authority: string;
+  date: string;
+  url: string;
+  category: string;
+  impact: 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'PROPOSED' | 'ENACTED' | 'UNDER_REVIEW';
+  relatedAssets?: string[];
+}
+
+interface CrystalRiskData {
+  address?: string;
+  riskScore: number;
+  riskLevel: 'HIGH' | 'MEDIUM' | 'LOW';
+  categories: string[];
+  lastUpdated: string;
+}
+
+interface RegulatorySearchParams {
+  jurisdiction?: string;
+  timeRange?: string;
+  category?: string;
+  asset?: string;
+  status?: string;
+}
+
+class RegulatoryCache extends TokenCache {
+  constructor() {
+    super(1800000); // 30 minutes cache for regulatory data
+  }
+}
+
+const regulatoryCache = new RegulatoryCache();
+
+async function fetchCrystalData(address: string): Promise<CrystalRiskData> {
+  const apiKey = process.env.CRYSTAL_API_KEY;
+  if (!apiKey) {
+    throw new Error('Crystal API key not configured');
+  }
+
+  const cacheKey = `crystal-${address}`;
+  const cachedData = regulatoryCache.get(cacheKey);
+  if (cachedData) return cachedData;
+
+  try {
+    const response = await fetch(
+      `https://api.crystalblockchain.com/v1/risk/${address}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Crystal API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const riskData: CrystalRiskData = {
+      address,
+      riskScore: data.risk_score,
+      riskLevel: data.risk_level,
+      categories: data.risk_categories,
+      lastUpdated: new Date().toISOString()
+    };
+
+    regulatoryCache.set(cacheKey, riskData);
+    return riskData;
+  } catch (error) {
+    console.error('Crystal API error:', error);
+    throw error;
+  }
+}
+
+async function fetchChainalysisData(asset: string): Promise<any> {
+  const apiKey = process.env.CHAINALYSIS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Chainalysis API key not configured');
+  }
+
+  const cacheKey = `chainalysis-${asset}`;
+  const cachedData = regulatoryCache.get(cacheKey);
+  if (cachedData) return cachedData;
+
+  try {
+    const response = await fetch(
+      `https://api.chainalysis.com/api/v1/asset/${asset}/compliance`,
+      {
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Chainalysis API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    regulatoryCache.set(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error('Chainalysis API error:', error);
+    throw error;
+  }
+}
+
+export async function getRegulatoryUpdates(
+  params: RegulatorySearchParams
+): Promise<RegulatoryUpdate[]> {
+  const cacheKey = `regulatory-${JSON.stringify(params)}`;
+  const cachedData = regulatoryCache.get(cacheKey);
+  if (cachedData) return cachedData;
+
+  try {
+    // Fetch from multiple sources and combine results
+    const [crystalUpdates, chainalysisUpdates] = await Promise.all([
+      params.asset ? fetchCrystalData(params.asset).then(data => ({
+        id: `crystal-${Date.now()}`,
+        title: `Risk Assessment for ${params.asset}`,
+        summary: `Risk score: ${data.riskScore}`,
+        jurisdiction: 'Global',
+        authority: 'Crystal Blockchain',
+        date: data.lastUpdated,
+        url: '',
+        category: 'RISK_ASSESSMENT',
+        impact: data.riskLevel,
+        status: 'ENACTED',
+        relatedAssets: [params.asset]
+      })) : Promise.resolve(null),
+      
+      params.asset ? fetchChainalysisData(params.asset).then(data => ({
+        id: `chainalysis-${Date.now()}`,
+        title: `Compliance Report for ${params.asset}`,
+        summary: data.summary || 'Compliance assessment report',
+        jurisdiction: 'Global',
+        authority: 'Chainalysis',
+        date: new Date().toISOString(),
+        url: '',
+        category: 'COMPLIANCE',
+        impact: data.riskLevel || 'MEDIUM',
+        status: 'ENACTED',
+        relatedAssets: [params.asset]
+      })) : Promise.resolve(null)
+    ]);
+
+    const updates: RegulatoryUpdate[] = [
+      crystalUpdates,
+      chainalysisUpdates
+    ].filter((update): update is RegulatoryUpdate => update !== null);
+
+    regulatoryCache.set(cacheKey, updates);
+    return updates;
+  } catch (error) {
+    console.error('Regulatory data fetch error:', error);
+    throw error;
+  }
+}
+
+export async function getComplianceRisk(
+  asset: string
+): Promise<{
+  riskScore: number;
+  riskLevel: string;
+  details: string[];
+}> {
+  try {
+    const [crystalData, chainalysisData] = await Promise.all([
+      fetchCrystalData(asset),
+      fetchChainalysisData(asset)
+    ]);
+
+    return {
+      riskScore: (crystalData.riskScore + chainalysisData.riskScore) / 2,
+      riskLevel: crystalData.riskLevel,
+      details: [
+        ...crystalData.categories,
+        ...chainalysisData.riskFactors || []
+      ]
+    };
+  } catch (error) {
+    console.error('Compliance risk assessment error:', error);
+    throw error;
+  }
+}
+
+================================================================================
+File: lib/agents/summarization.ts
+================================================================================
+
+import { Configuration, OpenAIApi } from 'openai';
+import { SummarizationInput } from './types';
+import { ConversationStore, ChatMessage } from '../conversation-store';
+
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+let openai: OpenAIApi | null = null;
+
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OpenAI API key is not configured');
+    }
+    
+    const configuration = new Configuration({ apiKey });
+    openai = new OpenAIApi(configuration);
+  }
+  return openai;
+}
+
+function generateTokenPriceResponse(tokenName: string, data: any): string {
+  // Check if we have error information
+  if (data?.error) {
+    return `### ${tokenName} Price Information
+
+I apologize, but I couldn't retrieve the current price for **${tokenName}**. This could be because:
+- The token might not be listed on major exchanges
+- The token symbol might be different than expected
+- The token might only be available on specific platforms
+
+To find accurate price information, you could:
+1. Check decentralized exchanges (DEXs)
+2. Visit the token's official website or community channels
+3. Search with alternative token symbols
+4. Check specialized crypto tracking platforms
+
+Would you like to:
+- Search for another token?
+- Get information about major cryptocurrencies instead?
+- Learn more about finding prices for newer tokens?`;
+  }
+
+  // Handle successful price data
+  if (data?.current_price) {
+    return `### Current ${tokenName} Price Data
+
+**Price**: $${data.current_price.toFixed(6)}
+**24h Change**: ${data.price_change_percentage_24h.toFixed(2)}%
+**Market Cap**: $${formatMarketCap(data.market_cap)}
+
+*Data source: ${data.source}*
+
+Would you like to:
+- See detailed market metrics?
+- Compare with other tokens?
+- View historical price data?`;
+  }
+
+  // Generic fallback response
+  return `### ${tokenName} Price Query
+
+I apologize, but I couldn't find current price information for **${tokenName}**. 
+The token data might be unavailable or the token symbol might need verification.
+
+Try checking:
+- Popular crypto exchanges
+- Token tracking websites
+- The project's official channels
+
+Would you like to search for a different token or get information about major cryptocurrencies instead?`;
+}
+
+function formatMarketCap(marketCap: number): string {
+  if (marketCap >= 1e9) {
+    return `${(marketCap / 1e9).toFixed(2)}B`;
+  }
+  if (marketCap >= 1e6) {
+    return `${(marketCap / 1e6).toFixed(2)}M`;
+  }
+  if (marketCap >= 1e3) {
+    return `${(marketCap / 1e3).toFixed(2)}K`;
+  }
+  return marketCap.toString();
+}
+
+const SYSTEM_PROMPT = `You are an advanced blockchain and cryptocurrency analysis system providing detailed, accurate responses based on real-time market data, regulatory information, news, and comprehensive blockchain knowledge.
+
+CONTEXT TYPES AND HANDLING:
+
+1. Market Data (MARKET_DATA, COMPARISON):
+   - Present prices with appropriate decimals (6 for < $1, 2 for >= $1)
+   - Format market caps using B/M/K notation
+   - Include percentage changes with +/- prefix
+   - Show relevant volume and liquidity metrics
+   - Compare multiple tokens when relevant
+
+2. Technical Information (TECHNICAL):
+   - Explain blockchain concepts clearly
+   - Use appropriate technical terminology
+   - Include code examples when relevant
+   - Reference specific protocols or standards
+   - Explain security implications
+
+3. DeFi Analysis (DEFI):
+   - Present TVL and yield data
+   - Explain protocol mechanisms
+   - Discuss risks and security considerations
+   - Compare with similar protocols
+   - Include liquidity metrics
+
+4. Regulatory Updates (REGULATORY):
+   - Summarize latest regulatory developments
+   - Specify jurisdictions affected
+   - Explain potential impact
+   - Include compliance requirements
+   - Reference official sources
+   - Present risk assessments when available
+
+5. News and Events (NEWS_EVENTS):
+   - Summarize recent developments
+   - Provide context and implications
+   - Include relevant dates
+   - Reference multiple sources
+   - Maintain objectivity
+
+6. Security Analysis (SECURITY):
+   - Present risk assessments
+   - Explain vulnerabilities
+   - Provide security recommendations
+   - Reference audits and incidents
+   - Include best practices
+
+RESPONSE STRUCTURE:
+
+1. Market Data Format:
+   - Prices: 6 decimals for < $1, 2 decimals for >= $1
+   - Market Cap: Use B/M/K notation (e.g., $50.5B)
+   - Percentages: Include +/- prefix, 2 decimal places
+   - Time References: Include timezone or relative time
+
+2. Regulatory Format:
+   - Jurisdiction: Clearly state affected regions
+   - Status: Indicate if proposed/enacted/under review
+   - Impact: HIGH/MEDIUM/LOW classification
+   - Compliance: List specific requirements
+   - Sources: Reference official documentation
+
+3. News Format:
+   - Date: Recent first, include timestamps
+   - Source: Credit reputable sources
+   - Impact: Explain significance
+   - Context: Provide background
+   - Follow-up: Suggest related queries
+
+4. Technical Format:
+   - Concepts: Clear explanations
+   - Code: Properly formatted examples
+   - Standards: Reference specifications
+   - Security: Note important considerations
+   - Resources: Link to documentation
+
+CRITICAL REQUIREMENTS:
+
+1. Accuracy:
+   - Never invent or estimate missing data
+   - Clearly indicate data sources
+   - Acknowledge limitations
+   - State when information is incomplete
+   - Update timestamps for time-sensitive data
+
+2. Clarity:
+   - Use appropriate technical terms
+   - Explain complex concepts
+   - Structure information logically
+   - Highlight important points
+   - Maintain consistent formatting
+
+3. Context:
+   - Reference relevant background
+   - Explain implications
+   - Compare with alternatives
+   - Note important caveats
+   - Suggest related queries
+
+4. Sources:
+   - Credit data providers
+   - Reference official documents
+   - Link to specifications
+   - Cite regulatory bodies
+   - Include timestamps
+
+5. Response Formatting:
+   - Use markdown for formatting
+   - Create clear sections with headers
+   - Use bullet points for lists
+   - Format code blocks properly
+   - Include line breaks for readability
+
+6. Error Handling:
+   - Acknowledge missing data
+   - Explain why data might be unavailable
+   - Suggest alternative sources
+   - Provide guidance for finding information
+   - Recommend follow-up queries
+
+7. Conversation Continuity:
+   - Reference previous context when relevant
+   - Build upon earlier discussions
+   - Maintain consistent terminology
+   - Track user preferences
+   - Suggest logical next queries`;
+
+export async function generateSummary(input: SummarizationInput): Promise<string> {
+  const { userQuery, analysis, aggregatorResult, sessionId, enhancedContext } = input;
+
+  try {
+    const client = getOpenAIClient();
+    
+    // Check if we have any valid data
+    const hasValidData = aggregatorResult?.primary?.coingecko || 
+                        aggregatorResult?.primary?.coinmarketcap;
+
+    // If this is a price query and we have token data, use the specialized formatter
+    if (analysis.classification.primaryIntent === 'MARKET_DATA' && 
+        analysis.queryAnalysis.detectedTokens.length === 1) {
+      const tokenName = analysis.queryAnalysis.detectedTokens[0];
+      const tokenData = aggregatorResult?.primary?.coingecko?.[tokenName] || 
+                       aggregatorResult?.primary?.coinmarketcap?.[tokenName];
+      
+      if (tokenData) {
+        return generateTokenPriceResponse(tokenName, tokenData);
+      }
+    }
+
+    // Format the system message to include context handling instructions
+    const systemMessage = `${SYSTEM_PROMPT}\n\nWhen generating responses:
+1. Consider the user's technical level and interests
+2. Maintain conversation continuity with previous topics
+3. Use appropriate terminology based on user's expertise
+4. Reference relevant history when appropriate
+5. Adapt explanation depth based on user preferences`;
+
+    // Build the conversation context
+    const messages = [
+      { role: "system" as const, content: systemMessage }
+    ];
+
+    // Add enhanced context if available
+    if (enhancedContext) {
+      messages.push({
+        role: "system" as const,
+        content: `Conversation Context:\n${enhancedContext}`
+      });
+    }
+
+    // If no valid data, provide a helpful response
+    if (!hasValidData && analysis.classification.needsApiCall) {
+      messages.push({
+        role: "user" as const,
+        content: `Generate a helpful response for a failed data fetch. Query: "${userQuery}". 
+Consider:
+1. Common reasons for missing data
+2. Alternative ways to find the information
+3. Suggestions for similar tokens or topics
+4. Guidance on verifying token information
+5. Next steps the user can take`
+      });
+    } else {
+      // Add the current query and data
+      messages.push({
+        role: "user" as const,
+        content: `Query: ${userQuery}\n\nAnalysis Context:\n${JSON.stringify(analysis, null, 2)}\n\nAvailable Data:\n${JSON.stringify(aggregatorResult, null, 2)}`
+      });
+    }
+
+    const completion = await client.createChatCompletion({
+      model: OPENAI_MODEL,
+      messages,
+      temperature: 0.3,
+      max_tokens: 700,
+      presence_penalty: 0.1,
+      frequency_penalty: 0.1
+    });
+
+    const response = completion.data.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error('No response from GPT');
+    }
+
+    return response.trim();
+
+  } catch (error) {
+    console.error('Summary generation error:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('API key')) {
+        throw new Error('OpenAI API key is not configured');
+      }
+      if (error.message.includes('429')) {
+        throw new Error('Rate limit exceeded. Please try again in a moment');
+      }
+      if (error.message.includes('401')) {
+        throw new Error('Authentication failed. Please check API key configuration');
+      }
+      if (error.message.includes('insufficient_quota')) {
+        throw new Error('OpenAI API quota exceeded. Please try again later');
+      }
+      throw error;
+    }
+    
+    throw new Error('Failed to generate summary');
+  }
+}
+
+================================================================================
+File: lib/agents/token-cache.ts
+================================================================================
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+export class TokenCache {
+  protected cache: Map<string, CacheEntry<any>>;
+  protected readonly TTL: number;
+
+  constructor(ttl: number = 60000) { // Default 1 minute cache
+    this.cache = new Map();
+    this.TTL = ttl;
+  }
+
+  get(key: string): any | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+
+    if (Date.now() - entry.timestamp > this.TTL) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return entry.data;
+  }
+
+  set(key: string, data: any): void {
+    if (Object.keys(data).length > 0) {
+      this.cache.set(key, {
+        data,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  getPartial(keys: string[]): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const key of keys) {
+      const data = this.get(key);
+      if (data) {
+        Object.assign(result, { [key]: data });
+      }
+    }
+    return result;
+  }
+
+  setPartial(keys: string[], data: Record<string, any>): void {
+    // Store combined data
+    this.set(keys.sort().join(','), data);
+    
+    // Store individual entries
+    for (const [key, value] of Object.entries(data)) {
+      this.set(key, { [key]: value });
+    }
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  cleanup(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      if (now - entry.timestamp > this.TTL) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+
+================================================================================
+File: lib/agents/types.ts
+================================================================================
+
+// Core intent types
+export type IntentType = 
+  | 'MARKET_DATA' 
+  | 'COMPARISON' 
+  | 'TECHNICAL' 
+  | 'DEFI'
+  | 'REGULATORY'
+  | 'NEWS_EVENTS'
+  | 'SECURITY'
+  | 'CONCEPTUAL'
+  | 'HYBRID'
+  | 'NEEDS_CONTEXT';
+
+// Market data types expanded
+export type MarketDataType = 
+  | 'price' 
+  | 'market_cap' 
+  | 'volume_24h' 
+  | 'trending'
+  | 'supply'
+  | 'volume'
+  | 'defi_tvl'
+  | 'yield'
+  | 'liquidity';
+
+// Time frames
+export type TimeFrame = 
+  | 'current'
+  | '24h'
+  | '7d'
+  | '30d'
+  | null;
+
+// Technical content types
+export type TechnicalContentType =
+  | 'smart_contract'
+  | 'protocol'
+  | 'architecture'
+  | 'implementation'
+  | 'code_example';
+
+// News and regulatory content types
+export type NewsContentType =
+  | 'announcement'
+  | 'update'
+  | 'regulation'
+  | 'policy'
+  | 'security_incident'
+  | 'market_event';
+
+// DeFi specific types
+export type DefiContentType =
+  | 'protocol_metrics'
+  | 'yield_data'
+  | 'tvl_analysis'
+  | 'pool_statistics'
+  | 'farming_data';
+
+// Enhanced comparison types
+export interface ComparisonRequest {
+  isComparison: boolean;
+  tokens: string[];
+  aspects: string[];
+  primaryMetric: string | null;
+  technicalAspects?: string[];
+  defiMetrics?: string[];
+}
+
+// Web search context type
+export interface WebSearchContext {
+  needed: boolean;
+  reason: string | null;
+  suggestedQueries: string[];
+  contentTypes: NewsContentType[];
+  timeRange?: string;
+}
+
+// Analysis requirements
+export interface DataRequirements {
+  marketData: {
+    needed: boolean;
+    types: MarketDataType[];
+    timeframe: TimeFrame;
+    tokenCount: number;
+  };
+  conceptualData: {
+    needed: boolean;
+    aspects: string[];
+  };
+  technicalData?: {
+    needed: boolean;
+    types: TechnicalContentType[];
+    codeLanguages?: string[];
+  };
+  defiData?: {
+    needed: boolean;
+    types: DefiContentType[];
+    protocols?: string[];
+  };
+  newsData?: {
+    needed: boolean;
+    types: NewsContentType[];
+    timeRange?: string;
+  };
+}
+
+// Original context preservation
+export interface OriginalContext {
+  rawQuery: string;
+  timestamp: number;
+  preprocessingSteps: PreprocessingStep[];
+  metadata: QueryMetadata;
+}
+
+export interface PreprocessingStep {
+  operation: string;
+  input: string;
+  output: string;
+}
+
+export interface QueryMetadata {
+  tokens: string[];
+  entities: string[];
+  contextualHints: string[];
+  technicalTerms?: string[];
+  defiProtocols?: string[];
+}
+
+// Main analysis interface
+export interface RobustAnalysis {
+  originalContext: OriginalContext;
+  classification: {
+    primaryIntent: IntentType;
+    confidence: number;
+    needsApiCall: boolean;
+    ambiguityLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+    requiresWebSearch: boolean;
+  };
+  queryAnalysis: {
+    sanitizedQuery: string;
+    detectedTokens: string[];
+    comparisonRequest: ComparisonRequest;
+    detectedIntents: string[];
+    timeContext: TimeFrame;
+    marketIndicators: string[];
+    conceptualIndicators: string[];
+    webSearchContext: WebSearchContext;
+  };
+  dataRequirements: DataRequirements;
+}
+
+// Input/Output types
+export interface Agent1Input {
+  query: string;
+}
+
+export interface SummarizationInput {
+  userQuery: string;
+  analysis: RobustAnalysis;
+  aggregatorResult?: AggregatorResult;
+}
+
+export interface AggregatorResult {
+  primary?: {
+    coingecko?: any;
+    defiLlama?: any;
+    theGraph?: any;
+  };
+  fallback?: {
+    googleSearch?: any;
+    webSearch?: any;
+    potentialCoinGeckoLinks?: string[];
+    firstSnippet?: string;
+  };
+}
+
+export interface OrchestrationResult {
+  analysis: RobustAnalysis;
+  aggregatorData: AggregatorResult | null;
+  response: string;
+  suggestions?: string[];
+}
+
+// Aggregator specification
+export interface AggregatorSpec {
+  primary: {
+    coingecko?: any;
+    defiLlama?: any;
+    theGraph?: any;
+  };
+  fallback: {
+    coingecko?: any;
+    webSearch?: any;
+  };
+}
+
+================================================================================
+File: lib/agents/validation.ts
+================================================================================
+
+import { z } from 'zod';
+import type { RobustAnalysis } from './types';
+
+// Custom error types
+export class ValidationError extends Error {
+  constructor(
+    message: string,
+    public field: string,
+    public details?: z.ZodError
+  ) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
+
+export class PreprocessingError extends Error {
+  constructor(
+    message: string,
+    public step: string,
+    public input?: string
+  ) {
+    super(message);
+    this.name = 'PreprocessingError';
+  }
+}
+
+export class LLMError extends Error {
+  constructor(
+    message: string,
+    public response?: any
+  ) {
+    super(message);
+    this.name = 'LLMError';
+  }
+}
+
+// Validation schemas
+const classificationSchema = z.object({
+  primaryIntent: z.enum([
+    'MARKET_DATA',
+    'COMPARISON',
+    'TECHNICAL',
+    'DEFI',
+    'REGULATORY',
+    'NEWS_EVENTS',
+    'SECURITY',
+    'CONCEPTUAL',
+    'HYBRID',
+    'NEEDS_CONTEXT'
+  ] as const),
+  confidence: z.number().min(0).max(1),
+  needsApiCall: z.boolean(),
+  ambiguityLevel: z.enum(['LOW', 'MEDIUM', 'HIGH'] as const),
+  requiresWebSearch: z.boolean()
+});
+
+const comparisonRequestSchema = z.object({
+  isComparison: z.boolean(),
+  tokens: z.array(z.string()).max(5),
+  aspects: z.array(z.string()),
+  primaryMetric: z.string().nullable()
+});
+
+const webSearchContextSchema = z.object({
+  needed: z.boolean(),
+  reason: z.string().nullable(),
+  suggestedQueries: z.array(z.string())
+});
+
+const queryAnalysisSchema = z.object({
+  sanitizedQuery: z.string().min(1),
+  detectedTokens: z.array(z.string()).max(5),
+  comparisonRequest: comparisonRequestSchema,
+  detectedIntents: z.array(z.string()),
+  timeContext: z.enum(['current', '24h', '7d', '30d'] as const).nullable(),
+  marketIndicators: z.array(z.string()),
+  conceptualIndicators: z.array(z.string()),
+  webSearchContext: webSearchContextSchema
+});
+
+const marketDataSchema = z.object({
+  needed: z.boolean(),
+  types: z.array(z.string()),
+  timeframe: z.enum(['current', '24h', '7d', '30d'] as const).nullable(),
+  tokenCount: z.number().min(0).max(5)
+});
+
+const conceptualDataSchema = z.object({
+  needed: z.boolean(),
+  aspects: z.array(z.string())
+});
+
+const dataRequirementsSchema = z.object({
+  marketData: marketDataSchema,
+  conceptualData: conceptualDataSchema
+});
+
+const preprocessingStepSchema = z.object({
+  operation: z.string(),
+  input: z.string(),
+  output: z.string()
+});
+
+const queryMetadataSchema = z.object({
+  tokens: z.array(z.string()),
+  entities: z.array(z.string()),
+  contextualHints: z.array(z.string())
+});
+
+const originalContextSchema = z.object({
+  rawQuery: z.string(),
+  timestamp: z.number(),
+  preprocessingSteps: z.array(preprocessingStepSchema),
+  metadata: queryMetadataSchema
+});
+
+const llmResponseSchema = z.object({
+  classification: classificationSchema,
+  queryAnalysis: queryAnalysisSchema,
+  dataRequirements: dataRequirementsSchema
+});
+
+const robustAnalysisSchema = z.object({
+  originalContext: originalContextSchema,
+  classification: classificationSchema,
+  queryAnalysis: queryAnalysisSchema,
+  dataRequirements: dataRequirementsSchema
+});
+
+export function validateLLMResponse(response: string): any {
+  try {
+    const parsed = JSON.parse(response);
+    return llmResponseSchema.parse(parsed);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new LLMError('Invalid JSON in LLM response', response);
+    }
+    if (error instanceof z.ZodError) {
+      const details = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      throw new LLMError(`Invalid response structure: ${details}`, response);
+    }
+    throw error;
+  }
+}
+
+export function validateAnalysis(analysis: unknown): void {
+  try {
+    robustAnalysisSchema.parse(analysis);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const firstError = error.errors[0];
+      throw new ValidationError(
+        `Invalid analysis: ${firstError.message}`,
+        firstError.path.join('.'),
+        error
+      );
+    }
+    throw error;
+  }
+}
+
+================================================================================
+File: lib/api-client.ts
+================================================================================
+
+import { generateResponse } from './llm';
+import { processBlockchainQuery } from './blockchain';
+
+// Client-side API functions
+export async function fetchBlockchainData(query: string) {
+  try {
+    const data = await processBlockchainQuery(query);
+    if (!data) {
+      throw new Error('No data returned from blockchain query');
+    }
+    return { data };
+  } catch (error) {
+    console.error('Blockchain query error:', error);
+    throw error;
+  }
+}
+
+export async function fetchChatResponse(query: string, context: any) {
+  try {
+    if (!query) {
+      throw new Error('Query is required');
+    }
+
+    if (!context || !context.data) {
+      throw new Error('Context data is required');
+    }
+
+    const response = await generateResponse(
+      query,
+      context.data,
+      context.conversationHistory,
+      {
+        queryType: context.queryType || 'trending',
+        temperature: 0.7,
+        maxTokens: 500
+      }
+    );
+
+    return { response };
+  } catch (error) {
+    console.error('Chat error:', error);
+    throw error;
+  }
+}
+
+================================================================================
+File: lib/blockchain.ts
+================================================================================
+
+import { getTrendingTokens, getTokenPrices, getTokenDetails } from './token-data';
+
+type ConversationContext = {
+  lastQuery?: string;
+  lastResults?: any[];
+  currentPage: number;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+};
+
+let conversationContext: ConversationContext = {
+  currentPage: 1,
+  messages: [],
+};
+
+export async function processBlockchainQuery(query: string) {
+  if (!query?.trim()) {
+    throw new Error('Query is required');
+  }
+
+  const lowercaseQuery = query.toLowerCase();
+  
+  try {
+    // Store user message in context
+    conversationContext.messages.push({ role: 'user', content: query });
+    
+    // Determine query type and get relevant data
+    let data;
+    
+    if (lowercaseQuery.includes('trending') || lowercaseQuery.includes('popular')) {
+      const trendingTokens = await getTrendingTokens();
+      if (!trendingTokens?.length) {
+        throw new Error('No trending tokens found');
+      }
+
+      const tokenIds = trendingTokens.map(trend => trend.item.id);
+      const tokenPrices = await getTokenPrices(tokenIds);
+      
+      data = {
+        trending: trendingTokens,
+        prices: tokenPrices,
+      };
+    } else if (lowercaseQuery.includes('price') || 
+               lowercaseQuery.includes('bitcoin') || 
+               lowercaseQuery.includes('eth')) {
+      // Extract token name from query
+      const tokenQuery = lowercaseQuery.includes('bitcoin') ? 'bitcoin' :
+                        lowercaseQuery.includes('eth') ? 'ethereum' :
+                        lowercaseQuery.split(' ').find(word => 
+                          !['what', 'is', 'the', 'price', 'of', 'show', 'me', 'tell'].includes(word)
+                        );
+      
+      if (!tokenQuery) {
+        throw new Error('Please specify which token you want to check');
+      }
+
+      const tokenInfo = await getTokenDetails(tokenQuery);
+      if (!tokenInfo) {
+        throw new Error(`Could not find information for token "${tokenQuery}"`);
+      }
+
+      data = { tokenInfo };
+    } else {
+      throw new Error('Please ask about trending tokens or specific token prices');
+    }
+
+    // Store data in context
+    if (data) {
+      conversationContext.lastResults = data;
+      conversationContext.lastQuery = query;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error processing blockchain query:', error);
+    throw error;
+  }
+}
+
+================================================================================
+File: lib/conversation-store.ts
+================================================================================
+
+import { v4 as uuidv4 } from 'uuid';
+import { IntentType } from './agents/types';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  metadata?: {
+    tokens?: string[];
+    intent?: IntentType;
+    confidence?: number;
+    topics?: string[];
+    entities?: string[];
+    contextualHints?: string[];
+    followUp?: boolean;
+    referenceMessageId?: string;
+  };
+  id: string;
+}
+
+export interface TopicMetadata {
+  name: string;
+  frequency: number;
+  lastMentioned: number;
+  relatedTokens: string[];
+  confidence: number;
+}
+
+export interface UserPreferences {
+  favoriteTokens: Map<string, number>; // token -> frequency
+  preferredTimeframes: Set<string>;
+  interests: Set<string>;
+  technicalLevel: 'basic' | 'intermediate' | 'advanced';
+  lastUpdated: number;
+}
+
+export interface ConversationMetadata {
+  lastActive: number;
+  messageCount: number;
+  topics: Map<string, TopicMetadata>;
+  userPreferences: UserPreferences;
+  continuityScore: number; // Measure of conversation coherence
+}
+
+export class ConversationStore {
+  private static conversations = new Map<string, ChatMessage[]>();
+  private static metadata = new Map<string, ConversationMetadata>();
+  private static readonly MAX_MESSAGES = 50; // Increased from 20
+  private static readonly EXPIRY_TIME = 24 * 60 * 60 * 1000; // Extended to 24 hours
+  private static readonly TOPIC_RELEVANCE_DECAY = 0.8; // Topic relevance decay factor
+
+  static getMessages(sessionId: string): ChatMessage[] {
+    this.cleanExpiredSessions();
+    return this.conversations.get(sessionId) || [];
+  }
+
+  static addMessage(sessionId: string, message: Omit<ChatMessage, 'id'>): void {
+    const convo = this.getMessages(sessionId);
+    const messageWithId: ChatMessage = {
+      ...message,
+      id: uuidv4(),
+      timestamp: message.timestamp || Date.now()
+    };
+
+    convo.push(messageWithId);
+
+    // Update metadata
+    const metadata = this.getMetadata(sessionId);
+    metadata.lastActive = Date.now();
+    metadata.messageCount++;
+
+    // Update topic metadata
+    if (message.metadata?.intent) {
+      this.updateTopicMetadata(metadata, message);
+    }
+
+    // Update user preferences
+    if (message.metadata?.tokens) {
+      this.updateUserPreferences(metadata, message);
+    }
+
+    // Calculate conversation continuity
+    this.updateContinuityScore(metadata, convo);
+
+    this.metadata.set(sessionId, metadata);
+    this.truncate(sessionId);
+    this.conversations.set(sessionId, convo);
+  }
+
+  private static updateTopicMetadata(metadata: ConversationMetadata, message: Omit<ChatMessage, 'id'>): void {
+    const { intent, tokens = [], confidence = 0 } = message.metadata!;
+    const topics = metadata.topics;
+    
+    if (!topics.has(intent!)) {
+      topics.set(intent!, {
+        name: intent!,
+        frequency: 1,
+        lastMentioned: message.timestamp,
+        relatedTokens: tokens,
+        confidence
+      });
+    } else {
+      const topic = topics.get(intent!)!;
+      topic.frequency++;
+      topic.lastMentioned = message.timestamp;
+      topic.relatedTokens = Array.from(new Set([...topic.relatedTokens, ...tokens]));
+      topic.confidence = Math.max(topic.confidence, confidence);
+    }
+  }
+
+  private static updateUserPreferences(metadata: ConversationMetadata, message: Omit<ChatMessage, 'id'>): void {
+    const { tokens = [], contextualHints = [] } = message.metadata!;
+    const prefs = metadata.userPreferences;
+
+    // Update token frequencies
+    tokens.forEach(token => {
+      prefs.favoriteTokens.set(token, (prefs.favoriteTokens.get(token) || 0) + 1);
+    });
+
+    // Update interests based on contextual hints
+    contextualHints.forEach(hint => prefs.interests.add(hint));
+
+    // Infer technical level
+    if (contextualHints.includes('TECHNICAL') || contextualHints.includes('CODE')) {
+      prefs.technicalLevel = 'advanced';
+    } else if (contextualHints.includes('INTERMEDIATE')) {
+      prefs.technicalLevel = 'intermediate';
+    }
+
+    prefs.lastUpdated = message.timestamp;
+  }
+
+  private static updateContinuityScore(metadata: ConversationMetadata, messages: ChatMessage[]): void {
+    if (messages.length < 2) {
+      metadata.continuityScore = 1;
+      return;
+    }
+
+    // Calculate continuity based on:
+    // 1. Time between messages
+    // 2. Topic consistency
+    // 3. Token overlap
+    let totalScore = 0;
+    for (let i = 1; i < messages.length; i++) {
+      const current = messages[i];
+      const previous = messages[i - 1];
+      
+      // Time factor (decay over time)
+      const timeDiff = current.timestamp - previous.timestamp;
+      const timeFactor = Math.exp(-timeDiff / (30 * 60 * 1000)); // 30 minute half-life
+
+      // Topic consistency
+      const topicFactor = current.metadata?.intent === previous.metadata?.intent ? 1 : 0.5;
+
+      // Token overlap
+      const currentTokens = new Set(current.metadata?.tokens || []);
+      const previousTokens = new Set(previous.metadata?.tokens || []);
+      const overlap = new Set([...currentTokens].filter(x => previousTokens.has(x)));
+      const tokenFactor = overlap.size > 0 ? 1 : 0.7;
+
+      totalScore += (timeFactor + topicFactor + tokenFactor) / 3;
+    }
+
+    metadata.continuityScore = totalScore / (messages.length - 1);
+  }
+
+  static truncate(sessionId: string, maxMessages = this.MAX_MESSAGES): void {
+    const convo = this.getMessages(sessionId);
+    if (convo.length > maxMessages) {
+      // Keep system messages and recent messages
+      const systemMessages = convo.filter(m => m.role === 'system');
+      const recentMessages = convo.slice(-maxMessages + systemMessages.length);
+      const truncated = [...systemMessages, ...recentMessages];
+      
+      this.conversations.set(sessionId, truncated);
+      
+      // Update metadata
+      const metadata = this.getMetadata(sessionId);
+      metadata.messageCount = truncated.length;
+      this.metadata.set(sessionId, metadata);
+    }
+  }
+
+  static getMetadata(sessionId: string): ConversationMetadata {
+    if (!this.metadata.has(sessionId)) {
+      this.metadata.set(sessionId, {
+        lastActive: Date.now(),
+        messageCount: 0,
+        topics: new Map(),
+        userPreferences: {
+          favoriteTokens: new Map(),
+          preferredTimeframes: new Set(),
+          interests: new Set(),
+          technicalLevel: 'basic',
+          lastUpdated: Date.now()
+        },
+        continuityScore: 1
+      });
+    }
+    return this.metadata.get(sessionId)!;
+  }
+
+  static createSession(): string {
+    const sessionId = uuidv4();
+    this.conversations.set(sessionId, []);
+    this.metadata.set(sessionId, this.getMetadata(sessionId));
+    return sessionId;
+  }
+
+  static cleanExpiredSessions(): void {
+    const now = Date.now();
+    for (const [sessionId, metadata] of this.metadata.entries()) {
+      if (now - metadata.lastActive > this.EXPIRY_TIME) {
+        this.conversations.delete(sessionId);
+        this.metadata.delete(sessionId);
+      }
+    }
+  }
+
+  static getRecentContext(sessionId: string, maxMessages = 5): ChatMessage[] {
+    const messages = this.getMessages(sessionId);
+    const metadata = this.getMetadata(sessionId);
+    
+    // Apply topic relevance decay
+    const now = Date.now();
+    metadata.topics.forEach((topic, key) => {
+      const age = (now - topic.lastMentioned) / (60 * 60 * 1000); // Hours
+      const relevance = Math.pow(this.TOPIC_RELEVANCE_DECAY, age);
+      if (relevance < 0.1) {
+        metadata.topics.delete(key);
+      }
+    });
+
+    // Get messages with high continuity
+    return messages
+      .slice(-maxMessages)
+      .filter(msg => {
+        // Keep messages that:
+        // 1. Are recent (< 1 hour old)
+        // 2. Share topics with current conversation
+        // 3. Have overlapping tokens with recent messages
+        const age = (now - msg.timestamp) / (60 * 60 * 1000);
+        if (age < 1) return true;
+        
+        const hasRelevantTopic = msg.metadata?.intent && 
+          metadata.topics.has(msg.metadata.intent);
+        
+        const hasTokenOverlap = msg.metadata?.tokens?.some(token => 
+          metadata.userPreferences.favoriteTokens.has(token));
+        
+        return hasRelevantTopic || hasTokenOverlap;
+      });
+  }
+
+  static getTopics(sessionId: string): TopicMetadata[] {
+    const metadata = this.getMetadata(sessionId);
+    return Array.from(metadata.topics.values())
+      .sort((a, b) => b.lastMentioned - a.lastMentioned);
+  }
+
+  static getUserPreferences(sessionId: string): UserPreferences {
+    return this.getMetadata(sessionId).userPreferences;
+  }
+
+  static getFavoriteTokens(sessionId: string, limit = 5): string[] {
+    const prefs = this.getUserPreferences(sessionId);
+    return Array.from(prefs.favoriteTokens.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([token]) => token);
+  }
+
+  static getConversationSummary(sessionId: string): {
+    messageCount: number;
+    continuityScore: number;
+    dominantTopics: string[];
+    userLevel: string;
+    favoriteTokens: string[];
+  } {
+    const metadata = this.getMetadata(sessionId);
+    const topics = Array.from(metadata.topics.values())
+      .sort((a, b) => b.frequency - a.frequency)
+      .slice(0, 3)
+      .map(t => t.name);
+
+    return {
+      messageCount: metadata.messageCount,
+      continuityScore: metadata.continuityScore,
+      dominantTopics: topics,
+      userLevel: metadata.userPreferences.technicalLevel,
+      favoriteTokens: this.getFavoriteTokens(sessionId)
+    };
+  }
+}
+
+================================================================================
+File: lib/conversation/context-builder.ts
+================================================================================
+
+import { ChatMessage, ConversationStore } from '../conversation-store';
+import { RobustAnalysis } from '../agents/types';
+
+export interface EnhancedContext {
+  recentMessages: ChatMessage[];
+  userPreferences: {
+    favoriteTokens: string[];
+    technicalLevel: string;
+    interests: string[];
+  };
+  conversationMetrics: {
+    continuityScore: number;
+    dominantTopics: string[];
+    messageCount: number;
+  };
+  currentQuery: {
+    analysis: RobustAnalysis;
+    relatedTopics: string[];
+    detectedTokens: string[];
+  };
+}
+
+export function buildEnhancedContext(
+  sessionId: string,
+  currentAnalysis: RobustAnalysis,
+  maxMessages = 5
+): EnhancedContext {
+  // Get conversation summary
+  const summary = ConversationStore.getConversationSummary(sessionId);
+  const recentMessages = ConversationStore.getRecentContext(sessionId, maxMessages);
+  const prefs = ConversationStore.getUserPreferences(sessionId);
+
+  // Find related topics from history
+  const relatedTopics = ConversationStore.getTopics(sessionId)
+    .filter(topic => {
+      // Topic is related if it:
+      // 1. Shares tokens with current query
+      // 2. Has the same intent
+      // 3. Was recently discussed
+      const hasSharedTokens = topic.relatedTokens.some(token => 
+        currentAnalysis.queryAnalysis.detectedTokens.includes(token)
+      );
+      
+      const hasSameIntent = topic.name === currentAnalysis.classification.primaryIntent;
+      
+      const isRecent = (Date.now() - topic.lastMentioned) < (30 * 60 * 1000); // 30 minutes
+      
+      return hasSharedTokens || hasSameIntent || isRecent;
+    })
+    .map(topic => topic.name);
+
+  return {
+    recentMessages,
+    userPreferences: {
+      favoriteTokens: Array.from(prefs.favoriteTokens.keys()),
+      technicalLevel: prefs.technicalLevel,
+      interests: Array.from(prefs.interests)
+    },
+    conversationMetrics: {
+      continuityScore: summary.continuityScore,
+      dominantTopics: summary.dominantTopics,
+      messageCount: summary.messageCount
+    },
+    currentQuery: {
+      analysis: currentAnalysis,
+      relatedTopics,
+      detectedTokens: currentAnalysis.queryAnalysis.detectedTokens
+    }
+  };
+}
+
+export function formatContextForPrompt(context: EnhancedContext): string {
+  const sections: string[] = [];
+
+  // Format conversation history
+  if (context.recentMessages.length > 0) {
+    sections.push('Recent Conversation:\n' + context.recentMessages
+      .map(msg => {
+        const tokens = msg.metadata?.tokens?.join(', ') || '';
+        const intent = msg.metadata?.intent || '';
+        return `${msg.role.toUpperCase()}: ${msg.content}\n[tokens: ${tokens}, intent: ${intent}]`;
+      })
+      .join('\n\n')
+    );
+  }
+
+  // Format user preferences
+  sections.push('User Context:\n' + JSON.stringify({
+    technicalLevel: context.userPreferences.technicalLevel,
+    interests: context.userPreferences.interests,
+    favoriteTokens: context.userPreferences.favoriteTokens
+  }, null, 2));
+
+  // Format conversation metrics
+  sections.push('Conversation Metrics:\n' + JSON.stringify({
+    messageCount: context.conversationMetrics.messageCount,
+    continuityScore: context.conversationMetrics.continuityScore.toFixed(2),
+    dominantTopics: context.conversationMetrics.dominantTopics
+  }, null, 2));
+
+  // Format current query information
+  sections.push('Current Query Context:\n' + JSON.stringify({
+    intent: context.currentQuery.analysis.classification.primaryIntent,
+    confidence: context.currentQuery.analysis.classification.confidence.toFixed(2),
+    detectedTokens: context.currentQuery.detectedTokens,
+    relatedTopics: context.currentQuery.relatedTopics,
+    timeContext: context.currentQuery.analysis.queryAnalysis.timeContext,
+    marketIndicators: context.currentQuery.analysis.queryAnalysis.marketIndicators,
+    conceptualIndicators: context.currentQuery.analysis.queryAnalysis.conceptualIndicators
+  }, null, 2));
+
+  return sections.join('\n\n');
+}
+
+export function analyzeContextContinuity(context: EnhancedContext): {
+  isCoherent: boolean;
+  confidence: number;
+  suggestedFollowUp?: string;
+} {
+  const continuityScore = context.conversationMetrics.continuityScore;
+  const currentIntent = context.currentQuery.analysis.classification.primaryIntent;
+  const recentIntents = context.recentMessages
+    .filter(msg => msg.metadata?.intent)
+    .map(msg => msg.metadata!.intent);
+
+  // Check if current query follows conversation flow
+  const isRelatedToRecent = recentIntents.includes(currentIntent) ||
+    context.currentQuery.relatedTopics.some(topic => recentIntents.includes(topic));
+
+  // Calculate confidence based on multiple factors
+  const intentConfidence = context.currentQuery.analysis.classification.confidence;
+  const topicRelevance = isRelatedToRecent ? 1 : 0.5;
+  const overallConfidence = (continuityScore * 0.3 + intentConfidence * 0.4 + topicRelevance * 0.3);
+
+  // Generate follow-up suggestion if conversation seems disconnected
+  let suggestedFollowUp: string | undefined;
+  if (!isRelatedToRecent && context.recentMessages.length > 0) {
+    const lastTopic = recentIntents[recentIntents.length - 1];
+    suggestedFollowUp = `Would you like to know how this relates to our previous discussion about ${lastTopic?.toLowerCase()}?`;
+  }
+
+  return {
+    isCoherent: continuityScore > 0.7 && isRelatedToRecent,
+    confidence: overallConfidence,
+    suggestedFollowUp
+  };
+}
+
+export function predictNextTopics(context: EnhancedContext): string[] {
+  const currentIntent = context.currentQuery.analysis.classification.primaryIntent;
+  const suggestions: string[] = [];
+
+  // Add suggestions based on current intent
+  switch (currentIntent) {
+    case 'MARKET_DATA':
+      suggestions.push(
+        'price trends',
+        'market comparison',
+        'volume analysis'
+      );
+      break;
+    case 'TECHNICAL':
+      suggestions.push(
+        'security implications',
+        'implementation details',
+        'best practices'
+      );
+      break;
+    case 'DEFI':
+      suggestions.push(
+        'yield strategies',
+        'liquidity analysis',
+        'protocol comparison'
+      );
+      break;
+    case 'REGULATORY':
+      suggestions.push(
+        'compliance requirements',
+        'jurisdictional analysis',
+        'risk assessment'
+      );
+      break;
+    case 'SECURITY':
+      suggestions.push(
+        'audit findings',
+        'security measures',
+        'risk mitigation'
+      );
+      break;
+    case 'NEWS_EVENTS':
+      suggestions.push(
+        'market impact',
+        'related developments',
+        'future implications'
+      );
+      break;
+    default:
+      suggestions.push(
+        'market overview',
+        'technical details',
+        'latest updates'
+      );
+  }
+
+  // Add suggestions based on user preferences
+  if (context.userPreferences.technicalLevel === 'advanced') {
+    suggestions.push(
+      'technical deep dive',
+      'architecture analysis',
+      'security audit'
+    );
+  }
+
+  // Add token-specific suggestions
+  context.userPreferences.favoriteTokens.slice(0, 2).forEach(token => {
+    suggestions.push(`${token} analysis`, `${token} performance`);
+  });
+
+  // Return top 5 unique suggestions
+  return Array.from(new Set(suggestions)).slice(0, 5);
+}
+
+================================================================================
+File: lib/conversation/context.ts
+================================================================================
+
+import { ChatMessage } from '../conversation-store';
+
+export interface ConversationContext {
+  recentMessages: ChatMessage[];
+  topics: string[];
+  userPreferences?: {
+    favoriteTokens?: string[];
+    preferredTimeframes?: string[];
+  };
+}
+
+export function buildContext(messages: ChatMessage[]): ConversationContext {
+  const topics = new Set<string>();
+  const favoriteTokens = new Set<string>();
+  const preferredTimeframes = new Set<string>();
+
+  messages.forEach(msg => {
+    if (msg.metadata?.intent) {
+      topics.add(msg.metadata.intent);
+    }
+    if (msg.metadata?.tokens) {
+      msg.metadata.tokens.forEach(token => favoriteTokens.add(token));
+    }
+  });
+
+  return {
+    recentMessages: messages.slice(-5),
+    topics: Array.from(topics),
+    userPreferences: {
+      favoriteTokens: Array.from(favoriteTokens),
+      preferredTimeframes: Array.from(preferredTimeframes)
+    }
+  };
+}
+
+================================================================================
+File: lib/conversation/manager.ts
+================================================================================
+
+import { ConversationContext, ConversationMemory, ConversationTopic } from '@/lib/types/conversation';
+import { RobustAnalysis } from '@/lib/agents/types';
+
+export class ConversationManager {
+  private contexts: Map<string, ConversationContext>;
+  private readonly MAX_TOPICS = 5;
+  private readonly MAX_MESSAGES = 10;
+  private readonly CONTEXT_EXPIRY = 30 * 60 * 1000; // 30 minutes
+
+  constructor() {
+    this.contexts = new Map();
+    // Set up periodic cleanup
+    setInterval(() => this.cleanupExpiredContexts(), 5 * 60 * 1000); // Every 5 minutes
+  }
+
+  private initializeContext(sessionId: string): ConversationContext {
+    return {
+      sessionId,
+      memory: {
+        topics: [],
+        userPreferences: {},
+        lastInteraction: Date.now()
+      },
+      recentMessages: [],
+    };
+  }
+
+  getContext(sessionId: string): ConversationContext {
+    let context = this.contexts.get(sessionId);
+    
+    if (!context) {
+      context = this.initializeContext(sessionId);
+      this.contexts.set(sessionId, context);
+    }
+
+    // Update last interaction time
+    context.memory.lastInteraction = Date.now();
+    return context;
+  }
+
+  updateContext(sessionId: string, analysis: RobustAnalysis, response: string): void {
+    const context = this.getContext(sessionId);
+    
+    // Update messages
+    context.recentMessages.push({
+      role: 'user',
+      content: analysis.originalContext.rawQuery,
+      timestamp: Date.now()
+    });
+    context.recentMessages.push({
+      role: 'assistant',
+      content: response,
+      timestamp: Date.now()
+    });
+
+    // Trim messages to keep only recent ones
+    if (context.recentMessages.length > this.MAX_MESSAGES) {
+      context.recentMessages = context.recentMessages.slice(-this.MAX_MESSAGES);
+    }
+
+    // Update topics based on analysis
+    this.updateTopics(context, analysis);
+
+    // Update user preferences if detected
+    this.updateUserPreferences(context, analysis);
+
+    // Set current topic
+    context.currentTopic = analysis.classification.primaryIntent;
+
+    this.contexts.set(sessionId, context);
+  }
+
+  private updateTopics(context: ConversationContext, analysis: RobustAnalysis): void {
+    const newTopic: ConversationTopic = {
+      name: analysis.classification.primaryIntent,
+      confidence: analysis.classification.confidence,
+      lastDiscussed: Date.now(),
+      relatedTokens: analysis.queryAnalysis.detectedTokens
+    };
+
+    const existingTopicIndex = context.memory.topics.findIndex(
+      t => t.name === newTopic.name
+    );
+
+    if (existingTopicIndex !== -1) {
+      // Update existing topic
+      context.memory.topics[existingTopicIndex] = {
+        ...context.memory.topics[existingTopicIndex],
+        lastDiscussed: Date.now(),
+        confidence: Math.max(
+          context.memory.topics[existingTopicIndex].confidence,
+          newTopic.confidence
+        ),
+        relatedTokens: Array.from(new Set([
+          ...context.memory.topics[existingTopicIndex].relatedTokens,
+          ...newTopic.relatedTokens
+        ]))
+      };
+    } else {
+      // Add new topic
+      context.memory.topics.push(newTopic);
+    }
+
+    // Keep only recent topics, sorted by last discussed
+    context.memory.topics = context.memory.topics
+      .sort((a, b) => b.lastDiscussed - a.lastDiscussed)
+      .slice(0, this.MAX_TOPICS);
+  }
+
+  private updateUserPreferences(context: ConversationContext, analysis: RobustAnalysis): void {
+    const prefs = context.memory.userPreferences;
+
+    // Update favorite tokens
+    if (analysis.queryAnalysis.detectedTokens.length > 0) {
+      const tokenFrequency = new Map<string, number>();
+      
+      // Count token frequency
+      analysis.queryAnalysis.detectedTokens.forEach(token => {
+        tokenFrequency.set(token, (tokenFrequency.get(token) || 0) + 1);
+      });
+
+      // Update favorites based on frequency
+      prefs.favoriteTokens = Array.from(tokenFrequency.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([token]) => token)
+        .slice(0, 5);
+    }
+
+    // Update risk tolerance
+    if (analysis.queryAnalysis.detectedIntents.includes('risk_assessment')) {
+      const riskTerms = analysis.queryAnalysis.detectedIntents.filter(
+        intent => ['high_risk', 'moderate_risk', 'low_risk'].includes(intent)
+      );
+      
+      if (riskTerms.length > 0) {
+        prefs.riskTolerance = riskTerms[0].includes('high') ? 'high' :
+                             riskTerms[0].includes('low') ? 'low' : 'medium';
+      }
+    }
+
+    // Update investment goals
+    if (analysis.queryAnalysis.detectedIntents.includes('investment_strategy')) {
+      const goals = analysis.queryAnalysis.conceptualIndicators
+        .filter(indicator => 
+          ['long_term', 'short_term', 'growth', 'income', 'trading'].includes(indicator)
+        );
+      
+      if (goals.length > 0) {
+        prefs.investmentGoals = Array.from(new Set([
+          ...(prefs.investmentGoals || []),
+          ...goals
+        ]));
+      }
+    }
+  }
+
+  suggestNextTopics(sessionId: string): string[] {
+    const context = this.getContext(sessionId);
+    const suggestions: string[] = [];
+
+    // Add topic-based suggestions
+    switch (context.currentTopic) {
+      case 'MARKET_DATA':
+        suggestions.push(
+          'How does this compare to other similar tokens?',
+          'What are the recent market trends?',
+          'Would you like to see the price history?'
+        );
+        break;
+      case 'COMPARISON':
+        suggestions.push(
+          'Which token has better performance?',
+          'What are the key differences in technology?',
+          'How do their market caps compare?'
+        );
+        break;
+      case 'CONCEPTUAL':
+        suggestions.push(
+          'Would you like to see some real-world examples?',
+          'How does this relate to other blockchain concepts?',
+          'What are the practical applications?'
+        );
+        break;
+      case 'HYBRID':
+        suggestions.push(
+          'Would you like more detailed market data?',
+          'Should we focus on technical analysis?',
+          'Would you like to understand the underlying technology?'
+        );
+        break;
+    }
+
+    // Add personalized suggestions
+    if (context.memory.userPreferences.favoriteTokens?.length) {
+      const favoriteToken = context.memory.userPreferences.favoriteTokens[0];
+      suggestions.push(
+        `What's the latest price of ${favoriteToken}?`,
+        `How has ${favoriteToken} performed recently?`
+      );
+    }
+
+    // Add risk-based suggestions
+    if (context.memory.userPreferences.riskTolerance) {
+      switch (context.memory.userPreferences.riskTolerance) {
+        case 'high':
+          suggestions.push(
+            'Show me high-potential emerging tokens',
+            'What are the most volatile tokens today?'
+          );
+          break;
+        case 'medium':
+          suggestions.push(
+            'Show me tokens with balanced risk-reward',
+            'What are the trending mid-cap tokens?'
+          );
+          break;
+        case 'low':
+          suggestions.push(
+            'What are the most stable tokens?',
+            'Show me tokens with consistent performance'
+          );
+          break;
+      }
+    }
+
+    // Randomize and limit suggestions
+    return this.shuffleArray(suggestions).slice(0, 3);
+  }
+
+  private shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  cleanupExpiredContexts(): void {
+    const now = Date.now();
+    for (const [sessionId, context] of this.contexts.entries()) {
+      if (now - context.memory.lastInteraction > this.CONTEXT_EXPIRY) {
+        this.contexts.delete(sessionId);
+      }
+    }
+  }
+}
+
+================================================================================
+File: lib/env-config.ts
+================================================================================
+
+interface EnvConfig {
+  COINGECKO_API_KEY: string;
+  COINMARKETCAP_API_KEY: string;
+  OPENAI_API_KEY: string;
+  NODE_ENV: string;
+  API_RATE_LIMITS: {
+    COINGECKO: number;
+    COINMARKETCAP: number;
+  };
+  API_BASE_URLS: {
+    COINGECKO: string;
+    COINMARKETCAP: string;
+  };
+}
+
+function validateEnv(): EnvConfig {
+  const requiredVars = [
+    'COINGECKO_API_KEY',
+    'COINMARKETCAP_API_KEY',
+    'OPENAI_API_KEY'
+  ];
+
+  const missingVars = requiredVars.filter(
+    varName => !process.env[varName]
+  );
+
+  if (missingVars.length > 0) {
+    throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+  }
+
+  return {
+    COINGECKO_API_KEY: process.env.COINGECKO_API_KEY!,
+    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY!,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+    NODE_ENV: process.env.NODE_ENV || 'development',
+    API_RATE_LIMITS: {
+      COINGECKO: parseInt(process.env.COINGECKO_RATE_LIMIT || '50'),
+      COINMARKETCAP: parseInt(process.env.COINMARKETCAP_RATE_LIMIT || '30')
+    },
+    API_BASE_URLS: {
+      COINGECKO: process.env.COINGECKO_API_BASE || 'https://api.coingecko.com/api/v3',
+      COINMARKETCAP: process.env.COINMARKETCAP_API_BASE || 'https://pro-api.coinmarketcap.com/v1'
+    }
+  };
+}
+
+export const envConfig = validateEnv();
+
+// Rate limit tracking
+let lastCoinGeckoCall = 0;
+let lastCoinMarketCapCall = 0;
+
+export function canCallCoinGecko(): boolean {
+  const now = Date.now();
+  const timeSinceLastCall = now - lastCoinGeckoCall;
+  const minInterval = (60 * 1000) / envConfig.API_RATE_LIMITS.COINGECKO; // Convert rate per minute to ms interval
+  return timeSinceLastCall >= minInterval;
+}
+
+export function canCallCoinMarketCap(): boolean {
+  const now = Date.now();
+  const timeSinceLastCall = now - lastCoinMarketCapCall;
+  const minInterval = (60 * 1000) / envConfig.API_RATE_LIMITS.COINMARKETCAP;
+  return timeSinceLastCall >= minInterval;
+}
+
+export function recordCoinGeckoCall(): void {
+  lastCoinGeckoCall = Date.now();
+}
+
+export function recordCoinMarketCapCall(): void {
+  lastCoinMarketCapCall = Date.now();
+}
+
+// Environment helpers
+export function isDevelopment(): boolean {
+  return envConfig.NODE_ENV === 'development';
+}
+
+export function isProduction(): boolean {
+  return envConfig.NODE_ENV === 'production';
+}
+
+// API key access
+export function getApiKey(service: 'COINGECKO' | 'COINMARKETCAP' | 'OPENAI'): string {
+  switch (service) {
+    case 'COINGECKO':
+      return envConfig.COINGECKO_API_KEY;
+    case 'COINMARKETCAP':
+      return envConfig.COINMARKETCAP_API_KEY;
+    case 'OPENAI':
+      return envConfig.OPENAI_API_KEY;
+    default:
+      throw new Error(`Unknown service: ${service}`);
+  }
+}
+
+// API base URL access
+export function getApiBaseUrl(service: 'COINGECKO' | 'COINMARKETCAP'): string {
+  return envConfig.API_BASE_URLS[service];
+}
+
+// Rate limit info
+export function getRateLimit(service: 'COINGECKO' | 'COINMARKETCAP'): number {
+  return envConfig.API_RATE_LIMITS[service];
+}
+
+// Time until next allowed call
+export function getTimeUntilNextCall(service: 'COINGECKO' | 'COINMARKETCAP'): number {
+  const now = Date.now();
+  const lastCall = service === 'COINGECKO' ? lastCoinGeckoCall : lastCoinMarketCapCall;
+  const minInterval = (60 * 1000) / getRateLimit(service);
+  const timeUntilNext = Math.max(0, minInterval - (now - lastCall));
+  return timeUntilNext;
+}
+
+================================================================================
+File: lib/llm.ts
+================================================================================
+
+import { Configuration, OpenAIApi } from 'openai';
+import { TokenInfo, TokenPrice, TokenTrend } from './token-data';
+
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+let openai: OpenAIApi | null = null;
+
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OpenAI API key is not configured');
+    }
+    
+    const configuration = new Configuration({ apiKey });
+    openai = new OpenAIApi(configuration);
+  }
+  return openai;
+}
+
+// System prompt template for different query types
+const SYSTEM_PROMPTS = {
+  trending: `You are an expert cryptocurrency analyst specializing in market trends and token analysis. Your role is to:
+1. Analyze the provided trending token data and their price movements
+2. Highlight significant price changes and market movements
+3. Provide brief, factual insights about each trending token
+4. Format the response in a clear, easy-to-read manner
+5. Only use the data provided - do not make assumptions or predictions
+
+When discussing tokens:
+- Always include the token symbol in uppercase
+- Show percentage changes with 2 decimal places
+- Format large numbers for readability (e.g., "$1.2M" instead of "1200000")
+- Highlight significant movements (>5% changes)
+- If price data is missing, acknowledge it explicitly`,
+
+  tokenInfo: `You are a cryptocurrency token specialist providing detailed token analysis. Your role is to:
+1. Present the token's key metrics clearly and accurately
+2. Explain price movements and market position
+3. Compare current prices to ATH when relevant
+4. Format numbers for easy reading
+5. Only use the provided data - no speculation or predictions
+
+When presenting token information:
+- Lead with the token's full name and symbol
+- Format market cap and volume figures clearly
+- Show price changes as percentages with 2 decimal places
+- Include supply information when available
+- If any key data is missing, acknowledge it explicitly`,
+
+  transactions: `You are a blockchain transaction analyst specializing in DeFi activities. Your role is to:
+1. Summarize recent transaction patterns
+2. Identify significant swaps or liquidity events
+3. Present transaction volumes clearly
+4. Group similar transactions when relevant
+5. Only discuss transactions in the provided data
+
+When analyzing transactions:
+- Format amounts with appropriate decimals
+- Group similar transaction types together
+- Highlight large value movements
+- Show timestamps in a human-readable format
+- If transaction details are incomplete, state it clearly`
+} as const;
+
+interface GenerateResponseOptions {
+  queryType: keyof typeof SYSTEM_PROMPTS;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export async function generateResponse(
+  query: string,
+  data: any,
+  context?: string,
+  options: GenerateResponseOptions = { queryType: 'trending' }
+): Promise<string> {
+  try {
+    // Validate input data
+    if (!query.trim()) {
+      throw new Error('Query cannot be empty');
+    }
+
+    if (!data) {
+      throw new Error('Data is required');
+    }
+
+    const client = getOpenAIClient();
+    
+    // Format data based on query type
+    const formattedData = formatDataForPrompt(data, options.queryType);
+    
+    const systemPrompt = SYSTEM_PROMPTS[options.queryType];
+    const userContext = context ? `Previous context:\n${context}\n\n` : '';
+    
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: `${userContext}Available Data:\n${formattedData}\n\nUser Question: ${query}` }
+    ];
+
+    const completion = await client.createChatCompletion({
+      model: OPENAI_MODEL,
+      messages,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? 500,
+      presence_penalty: 0.1,
+      frequency_penalty: 0.1,
+    });
+
+    const response = completion.data.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error('No response received from OpenAI');
+    }
+
+    return response;
+
+  } catch (error) {
+    console.error('LLM error:', error);
+    
+    // Improve error handling with specific error types
+    if (error instanceof Error) {
+      if (error.message.includes('API key')) {
+        throw new Error('OpenAI API key is invalid or not configured');
+      }
+      if (error.message.includes('429')) {
+        throw new Error('Rate limit exceeded. Please try again in a moment');
+      }
+      if (error.message.includes('401')) {
+        throw new Error('Authentication failed. Please check API key configuration');
+      }
+      if (error.message.includes('insufficient_quota')) {
+        throw new Error('OpenAI API quota exceeded. Please try again later');
+      }
+      throw error;
+    }
+    
+    throw new Error('An unexpected error occurred while processing your request');
+  }
+}
+
+function formatDataForPrompt(data: any, queryType: keyof typeof SYSTEM_PROMPTS): string {
+  if (!data) return 'No data available.';
+  
+  switch (queryType) {
+    case 'trending':
+      return formatTrendingData(data);
+    case 'tokenInfo':
+      return formatTokenInfo(data);
+    case 'transactions':
+      return formatTransactionData(data);
+    default:
+      return JSON.stringify(data, null, 2);
+  }
+}
+
+function formatTrendingData(data: { 
+  trending: TokenTrend[], 
+  prices: Record<string, TokenPrice> 
+}): string {
+  if (!data.trending?.length) return 'No trending data available.';
+  
+  return data.trending.map(trend => {
+    const price = data.prices[trend.item.id];
+    return `Token: ${trend.item.name} (${trend.item.symbol.toUpperCase()})
+- Market Cap Rank: ${trend.item.market_cap_rank ?? 'N/A'}
+- Current Price: ${price?.current_price ? `$${price.current_price.toFixed(6)}` : 'N/A'}
+- 24h Change: ${price?.price_change_percentage_24h ? `${price.price_change_percentage_24h.toFixed(2)}%` : 'N/A'}
+- Market Cap: ${price?.market_cap ? `$${formatNumber(price.market_cap)}` : 'N/A'}`;
+  }).join('\n\n');
+}
+
+function formatTokenInfo(data: { tokenDetails: TokenInfo[], prices: Record<string, TokenPrice> }): string {
+  if (!data.tokenDetails?.length) return 'No token information available.';
+  
+  return data.tokenDetails.map(token => {
+    const price = data.prices[token.id];
+    return `Token: ${token.name} (${token.symbol.toUpperCase()})
+Current Price: $${token.current_price?.toFixed(6) ?? 'N/A'}
+Market Cap: $${formatNumber(token.market_cap)} (Rank #${token.market_cap_rank ?? 'N/A'})
+24h Trading Volume: $${formatNumber(token.total_volume)}
+24h Price Change: ${token.price_change_percentage_24h?.toFixed(2) ?? 'N/A'}%
+24h Range: $${token.low_24h?.toFixed(6) ?? 'N/A'} - $${token.high_24h?.toFixed(6) ?? 'N/A'}
+All-Time High: $${token.ath?.toFixed(6) ?? 'N/A'} (${token.ath_date ? new Date(token.ath_date).toLocaleDateString() : 'N/A'})
+Supply Information:
+- Circulating: ${formatNumber(token.circulating_supply)}
+- Total: ${token.total_supply ? formatNumber(token.total_supply) : 'N/A'}
+- Max: ${token.max_supply ? formatNumber(token.max_supply) : 'N/A'}`;
+  }).join('\n\n');
+}
+
+function formatTransactionData(data: any): string {
+  if (!data?.transactions?.length) return 'No transaction data available.';
+  
+  return data.transactions.map((tx: any) => {
+    let actionType = 'Unknown';
+    let details = '';
+    
+    if (tx.swaps?.length) {
+      actionType = 'Swap';
+      const swap = tx.swaps[0];
+      details = `${swap.pair.token0.symbol}/${swap.pair.token1.symbol} ($${parseFloat(swap.amountUSD).toFixed(2)})`;
+    } else if (tx.mints?.length) {
+      actionType = 'Liquidity Addition';
+      const mint = tx.mints[0];
+      details = `${mint.pair.token0.symbol}/${mint.pair.token1.symbol}`;
+    } else if (tx.burns?.length) {
+      actionType = 'Liquidity Removal';
+      const burn = tx.burns[0];
+      details = `${burn.pair.token0.symbol}/${burn.pair.token1.symbol}`;
+    }
+
+    return `Transaction Type: ${actionType}
+Details: ${details}
+Timestamp: ${new Date(tx.timestamp * 1000).toLocaleString()}`;
+  }).join('\n\n');
+}
+
+function formatNumber(num: number | null | undefined): string {
+  if (num === null || num === undefined) return 'N/A';
+  
+  if (num >= 1e9) {
+    return `${(num / 1e9).toFixed(2)}B`;
+  }
+  if (num >= 1e6) {
+    return `${(num / 1e6).toFixed(2)}M`;
+  }
+  if (num >= 1e3) {
+    return `${(num / 1e3).toFixed(2)}K`;
+  }
+  return num.toString();
+}
+
+================================================================================
+File: lib/middleware.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { verifyToken, type UserRole } from './auth';
+
+export function withAuth(handler: Function, requiredRole?: UserRole) {
+  return async function (req: NextRequest) {
+    const token = req.headers.get('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const user = verifyToken(token);
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Invalid or expired token' },
+        { status: 401 }
+      );
+    }
+
+    if (requiredRole && user.role !== requiredRole) {
+      return NextResponse.json(
+        { error: 'Insufficient permissions' },
+        { status: 403 }
+      );
+    }
+
+    // Add user to request context
+    req.user = user;
+    
+    return handler(req);
+  };
+}
+
+================================================================================
+File: lib/orchestrator.ts
+================================================================================
+
+import { 
+  analyzeUserQuery,
+  buildAggregatorCalls,
+  executeAggregatorCalls,
+  generateSummary,
+  RobustAnalysis,
+  OrchestrationResult 
+} from './agents';
+import { ConversationStore, ChatMessage } from './conversation-store';
+import { buildEnhancedContext, formatContextForPrompt, analyzeContextContinuity } from './conversation/context-builder';
+
+export class AgentOrchestrator {
+  constructor() {
+    // Clean up expired sessions periodically
+    setInterval(() => {
+      ConversationStore.cleanExpiredSessions();
+    }, 5 * 60 * 1000); // Every 5 minutes
+  }
+
+  private checkApiKeys(): void {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('API configuration error: OpenAI API key is not configured');
+    }
+
+    if (!process.env.COINMARKETCAP_API_KEY) {
+      console.warn('Warning: CoinMarketCap API key not configured - fallback functionality may be limited');
+    }
+
+    if (!process.env.COINGECKO_API_KEY) {
+      console.warn('Warning: CoinGecko API key not configured - API rate limits may be restricted');
+    }
+  }
+
+  private async withRetry<T>(
+    operation: () => Promise<T>,
+    maxRetries = 3,
+    initialDelay = 1000
+  ): Promise<T> {
+    let lastError: Error | null = null;
+    
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Operation timed out')), 30000); // 30s timeout
+        });
+        
+        const operationPromise = operation();
+        
+        return await Promise.race([operationPromise, timeoutPromise]) as T;
+      } catch (error) {
+        lastError = error as Error;
+        
+        const isRetryable = error instanceof Error && (
+          error.message.includes('socket hang up') ||
+          error.message.includes('rate limit') ||
+          error.message.includes('timeout') ||
+          error.message.includes('ECONNRESET') ||
+          error.message.includes('ETIMEDOUT')
+        );
+        
+        if (isRetryable && i < maxRetries - 1) {
+          const delay = initialDelay * Math.pow(2, i);
+          console.log(`Retry ${i + 1}/${maxRetries} after ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        throw error;
+      }
+    }
+    
+    throw lastError || new Error('Operation failed after retries');
+  }
+
+  private async handleProcessingError(error: unknown): Promise<never> {
+    console.error('Orchestration error:', error);
+    
+    if (error instanceof Error) {
+      // Authentication errors
+      if (error.message.includes('401') || error.message.includes('unauthorized') || error.message.includes('invalid api key')) {
+        throw new Error('Service configuration error: API key is invalid or not configured properly. Please check your environment settings.');
+      }
+
+      // Rate limiting
+      if (error.message.includes('429') || error.message.includes('rate limit')) {
+        throw new Error('Service is currently busy. Please try again in a moment.');
+      }
+
+      // API errors
+      if (error.message.includes('socket hang up') || error.message.includes('ECONNRESET')) {
+        throw new Error('Connection interrupted. Please try again.');
+      }
+
+      if (error.message.includes('timeout')) {
+        throw new Error('Request timed out. Please try again.');
+      }
+
+      // Service errors
+      if (error.message.includes('503') || error.message.includes('502')) {
+        throw new Error('Service is temporarily unavailable. Please try again later.');
+      }
+
+      // Return the original error message if it's from our own validation
+      if (error.message.includes('API configuration error') || 
+          error.message.includes('Session ID is required')) {
+        throw error;
+      }
+    }
+    
+    // Generic error for unhandled cases
+    throw new Error('An unexpected error occurred. Please try again later.');
+  }
+
+  async processQuery(query: string, sessionId?: string): Promise<OrchestrationResult> {
+    console.log('Starting query processing:', { query, sessionId });
+    
+    try {
+      // Check API keys first
+      this.checkApiKeys();
+
+      if (!sessionId) {
+        throw new Error('Session ID is required for conversation memory');
+      }
+
+      // Step 1: Intent Analysis with retry
+      console.log('Running intent analysis...');
+      const analysis = await this.withRetry(
+        () => analyzeUserQuery({ query }),
+        3,
+        1000
+      );
+
+      // Step 2: Build Enhanced Context
+      const enhancedContext = buildEnhancedContext(sessionId, analysis);
+      const formattedContext = formatContextForPrompt(enhancedContext);
+      
+      // Analyze conversation continuity
+      const continuityAnalysis = analyzeContextContinuity(enhancedContext);
+      console.log('Context analysis:', {
+        isCoherent: continuityAnalysis.isCoherent,
+        confidence: continuityAnalysis.confidence
+      });
+
+      // Store user message with metadata
+      ConversationStore.addMessage(sessionId, {
+        role: 'user',
+        content: query,
+        timestamp: Date.now(),
+        metadata: {
+          intent: analysis.classification.primaryIntent,
+          confidence: analysis.classification.confidence,
+          tokens: analysis.queryAnalysis.detectedTokens,
+          contextConfidence: continuityAnalysis.confidence
+        }
+      });
+
+      let aggregatorData = null;
+      let response: string;
+
+      // Step 3: Process based on intent and context with retry
+      try {
+        if (analysis.classification.needsApiCall || analysis.classification.requiresWebSearch) {
+          console.log('Building aggregator spec...');
+          const aggregatorSpec = await buildAggregatorCalls(analysis);
+          
+          console.log('Executing aggregator calls with retry...');
+          aggregatorData = await this.withRetry(
+            () => executeAggregatorCalls(aggregatorSpec),
+            3,
+            2000
+          );
+        }
+
+        // Step 4: Generate Response with Enhanced Context and retry
+        console.log('Generating response with enhanced context...');
+        response = await this.withRetry(
+          () => generateSummary({
+            userQuery: query,
+            analysis,
+            aggregatorResult: aggregatorData,
+            sessionId,
+            enhancedContext: formattedContext
+          }),
+          3,
+          1000
+        );
+
+        // Store assistant response with metadata
+        ConversationStore.addMessage(sessionId, {
+          role: 'assistant',
+          content: response,
+          timestamp: Date.now(),
+          metadata: {
+            intent: analysis.classification.primaryIntent,
+            tokens: analysis.queryAnalysis.detectedTokens,
+            contextConfidence: continuityAnalysis.confidence
+          }
+        });
+
+        // Add follow-up suggestion if conversation flow needs bridging
+        if (continuityAnalysis.suggestedFollowUp) {
+          response += `\n\n${continuityAnalysis.suggestedFollowUp}`;
+        }
+
+        // Generate contextual suggestions
+        const suggestions = this.generateSuggestions(
+          analysis,
+          enhancedContext
+        );
+
+        return {
+          analysis,
+          aggregatorData,
+          response,
+          suggestions,
+          contextAnalysis: {
+            isCoherent: continuityAnalysis.isCoherent,
+            confidence: continuityAnalysis.confidence
+          }
+        };
+
+      } catch (error) {
+        console.error('Branch processing error:', error);
+        
+        // Attempt recovery with fallback processing
+        response = await this.withRetry(
+          () => generateSummary({
+            userQuery: query,
+            analysis,
+            aggregatorResult: null,
+            sessionId,
+            enhancedContext: formattedContext
+          }),
+          3,
+          1000
+        );
+
+        return {
+          analysis,
+          aggregatorData: null,
+          response,
+          suggestions: []
+        };
+      }
+
+    } catch (error) {
+      return this.handleProcessingError(error);
+    }
+  }
+
+  private generateSuggestions(
+    analysis: RobustAnalysis,
+    enhancedContext: any
+  ): string[] {
+    const suggestions: string[] = [];
+
+    // Add topic-based suggestions
+    switch (analysis.classification.primaryIntent) {
+      case 'MARKET_DATA':
+        if (enhancedContext.userPreferences.technicalLevel === 'advanced') {
+          suggestions.push(
+            'Would you like to see detailed market metrics?',
+            'Should we analyze the trading volume patterns?'
+          );
+        } else {
+          suggestions.push(
+            'How does this compare to other tokens?',
+            'Would you like to see the price history?'
+          );
+        }
+        break;
+
+      case 'TECHNICAL':
+        suggestions.push(
+          'Would you like to see code examples?',
+          'Should we explore security implications?'
+        );
+        break;
+
+      case 'DEFI':
+        suggestions.push(
+          'Would you like to analyze the protocol risks?',
+          'Should we compare yields across platforms?'
+        );
+        break;
+
+      case 'REGULATORY':
+        suggestions.push(
+          'Would you like to see compliance requirements?',
+          'Should we check jurisdictional differences?'
+        );
+        break;
+
+      case 'SECURITY':
+        suggestions.push(
+          'Would you like to see recent audit findings?',
+          'Should we review security best practices?'
+        );
+        break;
+
+      case 'NEWS_EVENTS':
+        suggestions.push(
+          'Would you like to see related developments?',
+          'Should we analyze market impact?'
+        );
+        break;
+    }
+
+    // Add personalized suggestions based on user preferences
+    if (enhancedContext.userPreferences.favoriteTokens.length) {
+      const favoriteToken = enhancedContext.userPreferences.favoriteTokens[0];
+      suggestions.push(
+        `What's the latest price of ${favoriteToken}?`,
+        `How has ${favoriteToken} performed recently?`
+      );
+    }
+
+    // Randomize and limit suggestions
+    return this.shuffleArray(suggestions).slice(0, 3);
+  }
+
+  private shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+}
+
+================================================================================
+File: lib/session-utils.ts
+================================================================================
+
+import { v4 as uuidv4 } from 'uuid';
+
+interface SessionStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+class MemoryStorage implements SessionStorage {
+  private storage = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.storage.get(key) || null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.storage.set(key, value);
+  }
+
+  removeItem(key: string): void {
+    this.storage.delete(key);
+  }
+}
+
+export const SESSION_STORAGE_KEY = 'chatSessionId';
+
+export const getStorage = (): SessionStorage => {
+  if (typeof window === 'undefined') {
+    return new MemoryStorage();
+  }
+
+  try {
+    // Test localStorage availability
+    const test = '__test__';
+    localStorage.setItem(test, test);
+    localStorage.removeItem(test);
+    return localStorage;
+  } catch (e) {
+    console.warn('localStorage not available, falling back to memory storage');
+    return new MemoryStorage();
+  }
+};
+
+export const initializeSession = (): string => {
+  const storage = getStorage();
+  const existingSession = storage.getItem(SESSION_STORAGE_KEY);
+  
+  if (existingSession) {
+    console.log('Found existing session:', existingSession);
+    return existingSession;
+  }
+  
+  const newSession = uuidv4();
+  console.log('Creating new session:', newSession);
+  
+  try {
+    storage.setItem(SESSION_STORAGE_KEY, newSession);
+  } catch (e) {
+    console.error('Failed to store session:', e);
+  }
+  
+  return newSession;
+};
+
+export const clearSession = (): void => {
+  const storage = getStorage();
+  try {
+    storage.removeItem(SESSION_STORAGE_KEY);
+  } catch (e) {
+    console.error('Failed to clear session:', e);
+  }
+};
+
+export const validateSession = (sessionId: string | null): boolean => {
+  if (!sessionId) return false;
+  
+  // Validate UUID format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(sessionId);
+};
+
+================================================================================
+File: lib/token-data.ts
+================================================================================
+
+import { 
+  envConfig, 
+  canCallCoinGecko, 
+  canCallCoinMarketCap,
+  recordCoinGeckoCall,
+  recordCoinMarketCapCall,
+  getApiBaseUrl,
+  getApiKey
+} from './env-config';
+import { queryCounter, queryDuration, queryErrors } from './monitoring';
+
+export interface TokenPrice {
+  current_price: number;
+  market_cap: number;
+  price_change_percentage_24h: number;
+  source: 'coingecko' | 'coinmarketcap';
+}
+
+export interface TokenInfo {
+  id: string;
+  symbol: string;
+  name: string;
+  current_price: number;
+  market_cap: number;
+  market_cap_rank: number;
+  total_volume: number;
+  high_24h: number | null;
+  low_24h: number | null;
+  price_change_24h: number;
+  price_change_percentage_24h: number;
+  circulating_supply: number;
+  total_supply: number;
+  max_supply: number | null;
+  ath: number | null;
+  ath_date: string | null;
+  source: 'coingecko' | 'coinmarketcap';
+}
+
+async function fetchCoinGecko(endpoint: string): Promise<Response> {
+  const response = await fetch(
+    `${getApiBaseUrl('COINGECKO')}${endpoint}`,
+    {
+      headers: {
+        'Accept': 'application/json',
+        'X-CoinGecko-API-KEY': getApiKey('COINGECKO')
+      }
+    }
+  );
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('CoinGecko rate limit exceeded');
+    }
+    throw new Error(`CoinGecko API error: ${response.status}`);
+  }
+
+  return response;
+}
+
+async function fetchCoinMarketCap(endpoint: string): Promise<any> {
+  const response = await fetch(
+    `${getApiBaseUrl('COINMARKETCAP')}${endpoint}`,
+    {
+      headers: {
+        'X-CMC_PRO_API_KEY': getApiKey('COINMARKETCAP'),
+        'Accept': 'application/json'
+      }
+    }
+  );
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('CoinMarketCap rate limit exceeded');
+    }
+    throw new Error(`CoinMarketCap API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.status?.error_code) {
+    throw new Error(`CoinMarketCap error: ${data.status.error_message}`);
+  }
+
+  return data.data;
+}
+
+async function searchToken(query: string): Promise<{id: string, symbol: string, name: string} | null> {
+  if (!query?.trim()) {
+    throw new Error('Search query is required');
+  }
+
+  try {
+    // Try CoinGecko first
+    if (canCallCoinGecko()) {
+      try {
+        const response = await fetchCoinGecko(
+          `/search?query=${encodeURIComponent(query)}`
+        );
+
+        const data = await response.json();
+        if (data.coins?.length > 0) {
+          // Find best match based on exact symbol/name match or highest market cap rank
+          const exactSymbolMatch = data.coins.find(
+            coin => coin.symbol.toLowerCase() === query.toLowerCase()
+          );
+          const exactNameMatch = data.coins.find(
+            coin => coin.name.toLowerCase() === query.toLowerCase()
+          );
+          const bestMatch = exactSymbolMatch || exactNameMatch || data.coins[0];
+
+          recordCoinGeckoCall();
+          return {
+            id: bestMatch.id,
+            symbol: bestMatch.symbol.toLowerCase(),
+            name: bestMatch.name
+          };
+        }
+      } catch (error) {
+        console.warn('CoinGecko search failed:', error);
+      }
+    }
+
+    // Fallback to CoinMarketCap
+    if (canCallCoinMarketCap()) {
+      try {
+        // First try exact symbol match
+        const symbolResponse = await fetchCoinMarketCap(
+          `/cryptocurrency/map?symbol=${encodeURIComponent(query.toUpperCase())}`
+        );
+
+        if (symbolResponse?.length > 0) {
+          recordCoinMarketCapCall();
+          const bestMatch = symbolResponse[0];
+          return {
+            id: bestMatch.id.toString(),
+            symbol: bestMatch.symbol.toLowerCase(),
+            name: bestMatch.name
+          };
+        }
+
+        // If no exact match, try keyword search
+        const searchResponse = await fetchCoinMarketCap(
+          `/cryptocurrency/map?keyword=${encodeURIComponent(query)}`
+        );
+
+        if (searchResponse?.length > 0) {
+          recordCoinMarketCapCall();
+          // Sort by rank to get most relevant result
+          const sortedResults = searchResponse.sort((a: any, b: any) => 
+            (a.rank || Infinity) - (b.rank || Infinity)
+          );
+          
+          const bestMatch = sortedResults[0];
+          return {
+            id: bestMatch.id.toString(),
+            symbol: bestMatch.symbol.toLowerCase(),
+            name: bestMatch.name
+          };
+        }
+      } catch (error) {
+        console.warn('CoinMarketCap search failed:', error);
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Token search error:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('rate limit')) {
+        throw new Error('Rate limit exceeded. Please try again in a moment.');
+      }
+      if (error.message.includes('API key')) {
+        throw new Error('API configuration error. Please check your settings.');
+      }
+    }
+    
+    throw new Error('Failed to search for token');
+  }
+}
+
+export async function getTokenDetails(query: string): Promise<TokenInfo | null> {
+  if (!query?.trim()) {
+    throw new Error('Token query is required');
+  }
+
+  try {
+    // First search for the token
+    const tokenMatch = await searchToken(query);
+    if (!tokenMatch) {
+      return null;
+    }
+
+    console.log(`Found token match:`, tokenMatch);
+
+    // Try CoinGecko first
+    if (canCallCoinGecko()) {
+      try {
+        const response = await fetchCoinGecko(
+          `/coins/${tokenMatch.id}?localization=false&tickers=false&community_data=false&developer_data=false`
+        );
+
+        const data = await response.json();
+        if (data?.market_data) {
+          recordCoinGeckoCall();
+          return {
+            id: data.id,
+            symbol: data.symbol,
+            name: data.name,
+            current_price: data.market_data.current_price.usd,
+            market_cap: data.market_data.market_cap.usd,
+            market_cap_rank: data.market_cap_rank,
+            total_volume: data.market_data.total_volume.usd,
+            high_24h: data.market_data.high_24h.usd,
+            low_24h: data.market_data.low_24h.usd,
+            price_change_24h: data.market_data.price_change_24h,
+            price_change_percentage_24h: data.market_data.price_change_percentage_24h,
+            circulating_supply: data.market_data.circulating_supply,
+            total_supply: data.market_data.total_supply,
+            max_supply: data.market_data.max_supply,
+            ath: data.market_data.ath.usd,
+            ath_date: data.market_data.ath_date.usd,
+            source: 'coingecko'
+          };
+        }
+      } catch (error) {
+        console.warn('CoinGecko details fetch failed:', error);
+      }
+    }
+
+    // Fallback to CoinMarketCap
+    if (canCallCoinMarketCap()) {
+      try {
+        const tokenData = await fetchCoinMarketCap(
+          `/cryptocurrency/quotes/latest?id=${tokenMatch.id}`
+        );
+
+        if (tokenData?.[tokenMatch.id]) {
+          recordCoinMarketCapCall();
+          const data = tokenData[tokenMatch.id];
+          const quote = data.quote.USD;
+          
+          return {
+            id: tokenMatch.id,
+            symbol: tokenMatch.symbol,
+            name: tokenMatch.name,
+            current_price: quote.price,
+            market_cap: quote.market_cap,
+            market_cap_rank: data.cmc_rank,
+            total_volume: quote.volume_24h,
+            high_24h: null,
+            low_24h: null,
+            price_change_24h: quote.percent_change_24h * quote.price / 100,
+            price_change_percentage_24h: quote.percent_change_24h,
+            circulating_supply: data.circulating_supply,
+            total_supply: data.total_supply,
+            max_supply: data.max_supply,
+            ath: null,
+            ath_date: null,
+            source: 'coinmarketcap'
+          };
+        }
+      } catch (error) {
+        console.warn('CoinMarketCap details fetch failed:', error);
+      }
+    }
+
+    throw new Error('Failed to fetch token details from all available sources');
+
+  } catch (error) {
+    console.error('Token details fetch error:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('rate limit')) {
+        throw new Error('Rate limit exceeded. Please try again in a moment.');
+      }
+      if (error.message.includes('API key')) {
+        throw new Error('API configuration error. Please check your settings.');
+      }
+    }
+    
+    return null;
+  }
+}
+
+export async function getTokenPrices(tokens: string[]): Promise<Record<string, TokenPrice>> {
+  const results: Record<string, TokenPrice> = {};
+  
+  for (const token of tokens) {
+    const tokenInfo = await getTokenDetails(token);
+    if (tokenInfo) {
+      results[token] = {
+        current_price: tokenInfo.current_price,
+        market_cap: tokenInfo.market_cap,
+        price_change_percentage_24h: tokenInfo.price_change_percentage_24h,
+        source: tokenInfo.source
+      };
+    }
+  }
+  
+  return results;
+}
+
+================================================================================
+File: lib/types/conversation.ts
+================================================================================
+
+import type { RobustAnalysis } from '@/lib/agents/types';
+
+export interface ConversationTopic {
+  name: string;
+  confidence: number;
+  lastDiscussed: number;
+  relatedTokens: string[];
+}
+
+export interface ConversationMemory {
+  topics: ConversationTopic[];
+  userPreferences: {
+    favoriteTokens?: string[];
+    riskTolerance?: 'low' | 'medium' | 'high';
+    investmentGoals?: string[];
+  };
+  lastInteraction: number;
+}
+
+export interface ConversationContext {
+  sessionId: string;
+  memory: ConversationMemory;
+  recentMessages: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: number;
+  }>;
+  currentTopic?: string;
+}
+
+================================================================================
+File: lib/utils.ts
+================================================================================
+
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+
+================================================================================
+File: lib/wagmi.ts
+================================================================================
+
+"use client";
+
+import { http, createConfig } from 'wagmi';
+import { mainnet } from 'wagmi/chains';
+import { injected } from 'wagmi/connectors';
+import { createPublicClient, fallback, http as viemHttp } from 'viem';
+
+const publicClient = createPublicClient({
+  chain: mainnet,
+  transport: fallback([
+    viemHttp(),
+    viemHttp('https://eth-mainnet.g.alchemy.com/v2/demo'),
+  ]),
+});
+
+export const config = createConfig({
+  chains: [mainnet],
+  connectors: [
+    injected(),
+  ],
+  transports: {
+    [mainnet.id]: http(),
+  },
+  publicClient,
+});
+
+================================================================================
+File: middleware.ts
+================================================================================
+
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function middleware(request: NextRequest) {
+  // Add CORS headers
+  const response = NextResponse.next();
+  
+  response.headers.set('Access-Control-Allow-Origin', '*');
+  response.headers.set(
+    'Access-Control-Allow-Methods',
+    'GET, POST, PUT, DELETE, OPTIONS'
+  );
+  response.headers.set(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization'
+  );
+
+  // Handle preflight requests
+  if (request.method === 'OPTIONS') {
+    return new NextResponse(null, { status: 200, headers: response.headers });
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: '/api/:path*',
+};
+
+================================================================================
+File: next.config.js
+================================================================================
+
+/** @type {import('next').NextConfig} */
+const config = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  images: { unoptimized: true },
+  async headers() {
+    return [
+      {
+        source: "/api/:path*",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Access-Control-Allow-Methods", value: "GET,POST,OPTIONS" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization" },
+          { key: "Content-Type", value: "application/json" }
+        ],
+      },
+    ];
+  },
+};
+
+export default config;
+
+================================================================================
+File: package.json
+================================================================================
+
+{
+  "name": "nextjs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test:agents": "NODE_ENV=test node --loader ts-node/esm tests/agent-tests.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^3.3.4",
+    "@radix-ui/react-accordion": "^1.1.2",
+    "@radix-ui/react-alert-dialog": "^1.0.5",
+    "@radix-ui/react-aspect-ratio": "^1.0.3",
+    "@radix-ui/react-avatar": "^1.0.4",
+    "@radix-ui/react-checkbox": "^1.0.4",
+    "@radix-ui/react-collapsible": "^1.0.3",
+    "@radix-ui/react-context-menu": "^2.1.5",
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-dropdown-menu": "^2.0.6",
+    "@radix-ui/react-hover-card": "^1.0.7",
+    "@radix-ui/react-label": "^2.0.2",
+    "@radix-ui/react-menubar": "^1.0.4",
+    "@radix-ui/react-navigation-menu": "^1.1.4",
+    "@radix-ui/react-popover": "^1.0.7",
+    "@radix-ui/react-progress": "^1.0.3",
+    "@radix-ui/react-radio-group": "^1.1.3",
+    "@radix-ui/react-scroll-area": "^1.0.5",
+    "@radix-ui/react-select": "^2.0.0",
+    "@radix-ui/react-separator": "^1.0.3",
+    "@radix-ui/react-slider": "^1.1.2",
+    "@radix-ui/react-slot": "^1.0.2",
+    "@radix-ui/react-switch": "^1.0.3",
+    "@radix-ui/react-tabs": "^1.0.4",
+    "@radix-ui/react-toast": "^1.1.5",
+    "@radix-ui/react-toggle": "^1.0.3",
+    "@radix-ui/react-toggle-group": "^1.0.4",
+    "@radix-ui/react-tooltip": "^1.0.7",
+    "@supabase/supabase-js": "^2.39.7",
+    "@tanstack/react-query": "^5.24.1",
+    "@types/node": "^20.11.20",
+    "@types/react": "^18.2.58",
+    "@types/react-dom": "^18.2.19",
+    "@types/uuid": "^9.0.8",
+    "autoprefixer": "^10.4.17",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.3.1",
+    "graphql": "^16.8.1",
+    "graphql-request": "^6.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.341.0",
+    "next": "14.1.0",
+    "openai": "^3.3.0",
+    "pino-pretty": "^10.3.1",
+    "postcss": "^8.4.35",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.12.1",
+    "tailwind-merge": "^2.2.1",
+    "tailwindcss": "^3.4.1",
+    "tailwindcss-animate": "^1.0.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "uuid": "^9.0.1",
+    "viem": "^2.7.13",
+    "wagmi": "^2.5.7",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@graphql-codegen/cli": "^5.0.2",
+    "@graphql-codegen/typescript": "^4.0.6",
+    "@graphql-codegen/typescript-operations": "^4.1.3",
+    "@types/jsonwebtoken": "^9.0.5"
+  }
+}
+
+================================================================================
+File: supabase/migrations/20250125030838_broad_tree.sql
+================================================================================
+
+/*
+  # Initial Schema Setup
+
+  1. New Tables
+    - `users`
+      - `id` (uuid, primary key)
+      - `address` (text, unique) - Ethereum address
+      - `role` (text) - User role (basic/advanced)
+      - `created_at` (timestamp)
+      - `last_login` (timestamp)
+    
+    - `queries`
+      - `id` (uuid, primary key)
+      - `user_id` (uuid, foreign key)
+      - `query` (text)
+      - `response` (text)
+      - `created_at` (timestamp)
+
+  2. Security
+    - Enable RLS on all tables
+    - Add policies for authenticated users
+*/
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  address text UNIQUE NOT NULL,
+  role text NOT NULL DEFAULT 'basic',
+  created_at timestamptz DEFAULT now(),
+  last_login timestamptz
+);
+
+-- Create queries table
+CREATE TABLE IF NOT EXISTS queries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id),
+  query text NOT NULL,
+  response text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Enable RLS
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE queries ENABLE ROW LEVEL SECURITY;
+
+-- Create policies
+CREATE POLICY "Users can read own data"
+  ON users
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own data"
+  ON users
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can read own queries"
+  ON queries
+  FOR SELECT
+  TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Users can insert own queries"
+  ON queries
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+================================================================================
+File: tailwind.config.ts
+================================================================================
+
+import type { Config } from 'tailwindcss';
+
+const config: Config = {
+  darkMode: ['class'],
+  content: [
+    './pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'gradient-conic':
+          'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+      colors: {
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        card: {
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        accent: {
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+        chart: {
+          '1': 'hsl(var(--chart-1))',
+          '2': 'hsl(var(--chart-2))',
+          '3': 'hsl(var(--chart-3))',
+          '4': 'hsl(var(--chart-4))',
+          '5': 'hsl(var(--chart-5))',
+        },
+      },
+      keyframes: {
+        'accordion-down': {
+          from: {
+            height: '0',
+          },
+          to: {
+            height: 'var(--radix-accordion-content-height)',
+          },
+        },
+        'accordion-up': {
+          from: {
+            height: 'var(--radix-accordion-content-height)',
+          },
+          to: {
+            height: '0',
+          },
+        },
+      },
+      animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
+      },
+    },
+  },
+  plugins: [require('tailwindcss-animate')],
+};
+export default config;
+
+
+================================================================================
+File: tsconfig.json
+================================================================================
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    },
+    "baseUrl": "."
+  },
+  "ts-node": {
+    "esm": true,
+    "transpileOnly": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}
