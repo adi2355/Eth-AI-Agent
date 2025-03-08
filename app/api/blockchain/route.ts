@@ -5,7 +5,7 @@ import { BlockchainActionParams } from '@/lib/agents/blockchain-orchestrator';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action } = body;
+    const { action, sessionId } = body;
     
     if (!action || !action.actionType) {
       return NextResponse.json(
@@ -29,8 +29,14 @@ export async function POST(request: NextRequest) {
       });
     }
     
+    // Add session ID to action params if provided
+    const actionWithSession: BlockchainActionParams = {
+      ...action,
+      sessionId: sessionId || 'default-session'
+    };
+    
     // For other actions, execute them on the server
-    const result = await blockchainOrchestrator.handleAction(action as BlockchainActionParams);
+    const result = await blockchainOrchestrator.handleAction(actionWithSession);
     
     return NextResponse.json(result);
   } catch (error) {

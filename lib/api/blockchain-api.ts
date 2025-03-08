@@ -13,6 +13,25 @@ import { WalletIntegrationService } from '../blockchain/wallet-integration';
  * to interact with blockchain functionality via server-side API.
  */
 export class BlockchainApiService {
+  // Session management
+  private sessionId: string | null = null;
+
+  /**
+   * Set the session ID for blockchain operations
+   * @param sessionId Session ID to use
+   */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /**
+   * Get the current session ID
+   * @returns Current session ID or null if not set
+   */
+  getSessionId(): string | null {
+    return this.sessionId;
+  }
+
   /**
    * Execute a blockchain action via the server API
    */
@@ -22,7 +41,10 @@ export class BlockchainApiService {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ 
+        action,
+        sessionId: this.sessionId || undefined
+      }),
     });
 
     if (!response.ok) {

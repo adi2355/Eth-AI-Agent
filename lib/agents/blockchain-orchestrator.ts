@@ -1,6 +1,7 @@
 import { contractDeploymentAgent, DeploymentParams, DeploymentResult } from './deployment/contract-deployment-agent';
 import { tokenTransferAgent, TransferParams, TransferResult } from './transaction/token-transfer-agent';
-import { walletService, WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { sessionManager } from '../blockchain/session-manager';
 import { tokenRegistry, TokenInfo } from '../blockchain/token-registry';
 import { getTemplate, ContractTemplate } from './deployment/contract-templates';
 
@@ -41,6 +42,7 @@ export type BlockchainActionType =
 // Blockchain action parameters
 export interface BlockchainActionParams {
   actionType: BlockchainActionType;
+  sessionId?: string;
   walletParams?: WalletConnectionOptions;
   deploymentParams?: DeploymentParams;
   transferParams?: TransferParams;
@@ -62,18 +64,21 @@ export class BlockchainOrchestrator {
   // Handle blockchain actions
   async handleAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
     try {
+      // Ensure a session ID is provided for operations that require it
+      const sessionId = params.sessionId || 'default-session';
+      
       switch (params.actionType) {
         case 'CONNECT_WALLET':
-          return await this.connectWallet(params.walletParams!);
+          return await this.connectWallet(sessionId, params.walletParams!);
           
         case 'DISCONNECT_WALLET':
-          return this.disconnectWallet();
+          return this.disconnectWallet(sessionId);
           
         case 'DEPLOY_CONTRACT':
-          return await this.deployContract(params.deploymentParams!);
+          return await this.deployContract(sessionId, params.deploymentParams!);
           
         case 'TRANSFER_TOKENS':
-          return await this.transferTokens(params.transferParams!);
+          return await this.transferTokens(sessionId, params.transferParams!);
           
         case 'GET_TOKEN_INFO':
           return await this.getTokenInfo(params.tokenAddress!, params.chainId!);
@@ -99,29 +104,38 @@ export class BlockchainOrchestrator {
       };
     }
   }
-
+  
   // Connect wallet
-  private async connectWallet(params: WalletConnectionOptions): Promise<BlockchainActionResult> {
+  async connectWallet(sessionId: string, options: WalletConnectionOptions): Promise<BlockchainActionResult> {
     try {
-      const address = await walletService.connect(params);
+      const address = await sessionManager.connectWallet(
+        sessionId,
+        options.type,
+        options.chainId
+      );
+      
       return {
         success: true,
         actionType: 'CONNECT_WALLET',
-        data: { address }
+        data: {
+          address
+        }
       };
     } catch (error) {
+      console.error('Wallet connection error:', error);
       return {
         success: false,
         actionType: 'CONNECT_WALLET',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Disconnect wallet
-  private disconnectWallet(): BlockchainActionResult {
+  disconnectWallet(sessionId: string): BlockchainActionResult {
     try {
-      walletService.disconnect();
+      sessionManager.removeConnection(sessionId);
+      
       return {
         success: true,
         actionType: 'DISCONNECT_WALLET'
@@ -130,43 +144,63 @@ export class BlockchainOrchestrator {
       return {
         success: false,
         actionType: 'DISCONNECT_WALLET',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to disconnect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Deploy contract
-  private async deployContract(params: DeploymentParams): Promise<BlockchainActionResult> {
+  async deployContract(sessionId: string, params: DeploymentParams): Promise<BlockchainActionResult> {
     try {
-      const result = await contractDeploymentAgent.deployContract(params);
+      // Get wallet service for the session
+      const walletService = sessionManager.getWalletService(sessionId);
+      
+      if (!walletService) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Use the contract deployment agent with the session's wallet
+      const result = await contractDeploymentAgent.deployContract(walletService, params);
+      
       return {
         success: true,
         actionType: 'DEPLOY_CONTRACT',
         data: result
       };
     } catch (error) {
+      console.error('Contract deployment error:', error);
       return {
         success: false,
         actionType: 'DEPLOY_CONTRACT',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to deploy contract: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Transfer tokens
-  private async transferTokens(params: TransferParams): Promise<BlockchainActionResult> {
+  async transferTokens(sessionId: string, params: TransferParams): Promise<BlockchainActionResult> {
     try {
-      const result = await tokenTransferAgent.transferTokens(params);
+      // Get wallet service for the session
+      const walletService = sessionManager.getWalletService(sessionId);
+      
+      if (!walletService) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Use the token transfer agent with the session's wallet
+      const result = await tokenTransferAgent.transferTokens(walletService, params);
+      
       return {
         success: true,
         actionType: 'TRANSFER_TOKENS',
         data: result
       };
     } catch (error) {
+      console.error('Token transfer error:', error);
       return {
         success: false,
         actionType: 'TRANSFER_TOKENS',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to transfer tokens: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }

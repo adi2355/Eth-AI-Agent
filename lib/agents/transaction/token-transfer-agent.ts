@@ -1,4 +1,4 @@
-import { walletService, WalletIntegrationService } from '../../blockchain/wallet-integration';
+import { WalletIntegrationService } from '../../blockchain/wallet-integration';
 import { tokenRegistry } from '../../blockchain/token-registry';
 import { validateTransaction } from '../security/contract-validator';
 import { publicClient } from '../../blockchain/providers';
@@ -27,6 +27,7 @@ export interface TransferResult {
   amount: string;
   amountInWei: bigint;
   status: 'pending' | 'success' | 'failed';
+  confirmations?: number;
   receipt?: any;
   error?: string;
 }
@@ -35,10 +36,13 @@ export class TokenTransferAgent {
   private transfers = new Map<string, TransferResult>();
 
   // Transfer ETH or tokens
-  async transferTokens(params: TransferParams): Promise<TransferResult> {
+  async transferTokens(
+    walletServiceInstance: WalletIntegrationService,
+    params: TransferParams
+  ): Promise<TransferResult> {
     try {
       // Check if wallet is connected
-      if (!walletService.isConnected()) {
+      if (!walletServiceInstance.isConnected()) {
         throw new Error('Wallet not connected');
       }
       
@@ -63,7 +67,7 @@ export class TokenTransferAgent {
         amountInWei = WalletIntegrationService.parseEther(params.amount);
         
         // Validate transaction
-        const validationResult = await validateTransaction(params.to, amountInWei, undefined);
+        const validationResult = await validateTransaction(params.to, amountInWei);
         if (!validationResult.valid) {
           throw new Error(`Transaction validation failed: ${validationResult.issues.map(i => i.title).join(', ')}`);
         }
@@ -71,8 +75,7 @@ export class TokenTransferAgent {
         // Prepare transaction options
         const txOptions: any = {
           to: params.to,
-          value: amountInWei,
-          data: undefined
+          value: amountInWei
         };
         
         // Add gas parameters if provided
@@ -87,7 +90,7 @@ export class TokenTransferAgent {
         }
         
         // Send transaction
-        txHash = await walletService.sendTransaction(txOptions);
+        txHash = await walletServiceInstance.sendTransaction(txOptions);
       } else {
         // Token transfer
         // Get token info
@@ -117,6 +120,7 @@ export class TokenTransferAgent {
         
         // Transfer tokens
         txHash = await tokenRegistry.transfer(
+          walletServiceInstance,
           params.tokenAddress!,
           params.to,
           amountInWei,
@@ -138,7 +142,7 @@ export class TokenTransferAgent {
       this.transfers.set(txHash, transferResult);
       
       // Wait for transaction confirmation in the background
-      this.waitForTransfer(txHash);
+      this.waitForTransfer(txHash, walletServiceInstance);
       
       return transferResult;
     } catch (error) {
@@ -148,15 +152,19 @@ export class TokenTransferAgent {
   }
 
   // Wait for transfer confirmation
-  private async waitForTransfer(hash: `0x${string}`): Promise<void> {
+  private async waitForTransfer(
+    hash: `0x${string}`,
+    walletServiceInstance: WalletIntegrationService
+  ): Promise<void> {
     try {
       // Wait for transaction receipt
-      const receipt = await walletService.waitForTransaction(hash);
+      const receipt = await walletServiceInstance.waitForTransaction(hash);
       
       // Update transfer result
       const transfer = this.transfers.get(hash);
       if (transfer) {
         transfer.status = receipt.status === 'success' ? 'success' : 'failed';
+        transfer.confirmations = receipt.confirmations || 1;
         transfer.receipt = receipt;
         
         this.transfers.set(hash, transfer);

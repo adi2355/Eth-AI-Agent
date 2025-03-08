@@ -216,8 +216,11 @@ export function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>(uuidv4());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [transactions, setTransactions] = useState<{
@@ -244,6 +247,35 @@ export function ChatInterface() {
   useEffect(() => {
     setSessionId(uuidv4());
   }, []);
+
+  useEffect(() => {
+    blockchainApi.setSessionId(sessionId);
+    
+    setMessages([]);
+    
+    try {
+      const savedMessages = localStorage.getItem(`chat_messages_${sessionId}`);
+      if (savedMessages) {
+        const parsedMessages = JSON.parse(savedMessages);
+        setMessages(parsedMessages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        })));
+      }
+    } catch (error) {
+      console.error('Failed to restore messages:', error);
+    }
+  }, [sessionId]);
+  
+  useEffect(() => {
+    if (messages.length > 0) {
+      try {
+        localStorage.setItem(`chat_messages_${sessionId}`, JSON.stringify(messages));
+      } catch (error) {
+        console.error('Failed to save messages:', error);
+      }
+    }
+  }, [messages, sessionId]);
 
   const handleError = (error: unknown): ErrorAlert => {
     if (error instanceof Error) {
@@ -387,28 +419,40 @@ export function ChatInterface() {
 
   const connectWallet = async () => {
     try {
-      setIsConnecting(true);
+      blockchainApi.setSessionId(sessionId);
+      
       const address = await blockchainApi.connectWallet('metamask');
-      setWalletAddress(address);
-      setMessages(prev => [...prev, {
+      
+      const newMessage: Message = {
         role: 'assistant',
-        content: `✅ Wallet connected: ${address.slice(0, 6)}...${address.slice(-4)}`,
-        timestamp: new Date()
-      }]);
+        content: `✅ Wallet connected successfully!\n\nAddress: \`${address.slice(0, 6)}...${address.slice(-4)}\`\n\nYou can now perform blockchain operations like deploying contracts and sending transactions.`,
+        timestamp: new Date(),
+        data: {
+          blockchain: {
+            actionType: 'CONNECT_WALLET',
+            address
+          }
+        }
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
+      
     } catch (error) {
       console.error('Wallet connection error:', error);
-      setMessages(prev => [...prev, {
+      
+      const newMessage: Message = {
         role: 'assistant',
-        content: `Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        content: 'Failed to connect wallet. Please try again.',
         timestamp: new Date(),
         error: {
           type: 'api-error',
-          message: 'Wallet connection failed',
+          message: 'Failed to connect wallet',
+          suggestion: error instanceof Error ? error.message : 'Please check if MetaMask is installed and unlocked.',
           retryable: true
         }
-      }]);
-    } finally {
-      setIsConnecting(false);
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
     }
   };
 

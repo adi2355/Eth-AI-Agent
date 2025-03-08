@@ -71,65 +71,64 @@ export class ContractDeploymentAgent {
     throw new Error('Either source or templateId must be provided');
   }
 
-  // Deploy a smart contract
-  async deployContract(params: DeploymentParams): Promise<DeploymentResult> {
+  // Deploy a contract
+  async deployContract(
+    walletServiceInstance: WalletIntegrationService,
+    params: DeploymentParams
+  ): Promise<DeploymentResult> {
     try {
       // Check if wallet is connected
-      if (!walletService.isConnected()) {
+      if (!walletServiceInstance.isConnected()) {
         throw new Error('Wallet not connected');
       }
       
       // Get contract source
       const source = await this.getContractSource(params);
       
-      // Validate contract security
-      const securityResults = await validateContract(source);
-      if (!securityResults.valid) {
-        throw new Error(`Contract failed security validation: ${securityResults.issues.map(i => i.title).join(', ')}`);
-      }
+      // Compile contract
+      const compilation = await compile(source);
       
-      // Compile the contract
-      const compilation = await compile(source, {
-        optimizer: {
-          enabled: true,
-          runs: params.optimizationRuns || 200
-        },
-        version: params.compilerVersion
-      });
-      
+      // Check for compilation errors
       if (compilation.errors && compilation.errors.length > 0) {
-        throw new Error(`Compilation failed: ${compilation.errors.map((e: { message: string }) => e.message).join(', ')}`);
+        const errorMessages = compilation.errors
+          .filter(error => error.severity === 'error')
+          .map(error => error.message)
+          .join('\n');
+        
+        throw new Error(`Compilation failed:\n${errorMessages}`);
       }
       
-      // Find the main contract (assuming it's the last one)
-      const contractNames = Object.keys(compilation.contracts);
-      const contractName = contractNames[contractNames.length - 1];
+      // Get contract info
+      const contractName = Object.keys(compilation.contracts)[0];
       const contract = compilation.contracts[contractName];
       
-      // Prepare deployment data
-      const bytecode = contract.evm.bytecode.object as `0x${string}`;
-      const abi = JSON.parse(contract.abi);
-      
-      // Encode constructor arguments if provided
-      let data = bytecode;
-      if (params.constructorArgs && params.constructorArgs.length > 0) {
-        // Find constructor in ABI
-        const constructorAbi = abi.find((item: any) => item.type === 'constructor');
-        if (constructorAbi) {
-          const encodedArgs = encodeAbiParameters(
-            constructorAbi.inputs,
-            params.constructorArgs
-          );
-          data = `${bytecode}${encodedArgs.slice(2)}`; // remove 0x prefix from args
-        }
+      // Ensure contract has bytecode
+      if (!contract.evm || !contract.evm.bytecode || !contract.evm.bytecode.object) {
+        throw new Error('Compiled contract has no bytecode');
       }
       
+      // Get ABI and bytecode
+      const abi = contract.abi;
+      const bytecode = `0x${contract.evm.bytecode.object}` as `0x${string}`;
+      
+      // Validate contract
+      const securityCheck = validateContract(abi, bytecode);
+      if (!securityCheck.valid) {
+        throw new Error(`Contract security check failed: ${securityCheck.issues.map(i => i.title).join(', ')}`);
+      }
+      
+      // Prepare constructor args
+      const constructorArgs = params.constructorArgs || [];
+      
       // Prepare transaction options
-      const txOptions: TransactionOptions = {
-        to: '0x' as `0x${string}`, // Empty address for contract deployment
-        data: data as `0x${string}`,
-        value: params.value ? WalletIntegrationService.parseEther(params.value) : 0n,
+      const txOptions: any = {
+        data: bytecode
       };
+      
+      // Add value if provided (for payable constructors)
+      if (params.value) {
+        txOptions.value = WalletIntegrationService.parseEther(params.value);
+      }
       
       // Add gas parameters if provided
       if (params.gasLimit) {
@@ -142,61 +141,57 @@ export class ContractDeploymentAgent {
         txOptions.maxPriorityFeePerGas = BigInt(params.maxPriorityFeePerGas);
       }
       
-      // Send deployment transaction
-      const hash = await walletService.sendTransaction(txOptions);
+      // Deploy contract
+      const txHash = await walletServiceInstance.sendTransaction(txOptions);
       
-      // Create initial deployment result
+      // Create deployment result
       const deploymentResult: DeploymentResult = {
-        transactionHash: hash,
-        contractAddress: null,
+        transactionHash: txHash,
+        contractAddress: null, // Will be updated after confirmation
         deploymentStatus: 'pending',
         abi,
         bytecode,
-        constructorArgs: params.constructorArgs || []
+        constructorArgs
       };
       
       // Store the deployment
-      this.deployments.set(hash, deploymentResult);
+      this.deployments.set(txHash, deploymentResult);
       
-      // Wait for transaction confirmation in the background
-      this.waitForDeployment(hash, params.verify);
+      // Wait for deployment confirmation in the background
+      this.waitForDeployment(txHash, params.verify || false, walletServiceInstance);
       
       return deploymentResult;
-      
     } catch (error) {
       console.error('Contract deployment error:', error);
-      throw new Error(`Failed to deploy contract: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Contract deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   // Wait for deployment confirmation
-  private async waitForDeployment(hash: `0x${string}`, verify: boolean = false): Promise<void> {
+  private async waitForDeployment(
+    hash: `0x${string}`, 
+    verify: boolean = false,
+    walletServiceInstance: WalletIntegrationService
+  ): Promise<void> {
     try {
       // Wait for transaction receipt
-      const receipt = await walletService.waitForTransaction(hash);
+      const receipt = await walletServiceInstance.waitForTransaction(hash);
       
       // Update deployment result
       const deployment = this.deployments.get(hash);
       if (deployment) {
         deployment.deploymentStatus = receipt.status === 'success' ? 'success' : 'failed';
         deployment.contractAddress = receipt.contractAddress as `0x${string}` || null;
+        deployment.receipt = receipt;
         deployment.gasUsed = receipt.gasUsed;
         deployment.effectiveGasPrice = receipt.effectiveGasPrice;
-        deployment.receipt = receipt;
-        
-        // Verify contract on Etherscan if requested
-        if (verify && receipt.status === 'success' && receipt.contractAddress) {
-          try {
-            // Verification logic would go here
-            // This would typically call the Etherscan API
-            console.log(`Contract verification requested for ${receipt.contractAddress}`);
-          } catch (verifyError) {
-            console.error('Contract verification error:', verifyError);
-            deployment.error = `Deployment succeeded but verification failed: ${verifyError instanceof Error ? verifyError.message : 'Unknown error'}`;
-          }
-        }
         
         this.deployments.set(hash, deployment);
+      }
+      
+      // Verify contract if requested
+      if (verify && deployment && deployment.contractAddress) {
+        // TODO: Implement contract verification
       }
     } catch (error) {
       console.error('Deployment confirmation error:', error);
@@ -205,7 +200,7 @@ export class ContractDeploymentAgent {
       const deployment = this.deployments.get(hash);
       if (deployment) {
         deployment.deploymentStatus = 'failed';
-        deployment.error = `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        deployment.error = `Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
         this.deployments.set(hash, deployment);
       }
     }

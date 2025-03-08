@@ -46,7 +46,12 @@ const classificationSchema = z.object({
     'SECURITY',
     'CONCEPTUAL',
     'HYBRID',
-    'NEEDS_CONTEXT'
+    'NEEDS_CONTEXT',
+    'TRANSFER_TOKENS',
+    'DEPLOY_CONTRACT',
+    'CONNECT_WALLET',
+    'BLOCKCHAIN_TRANSACTION',
+    'NFT_INTERACTION'
   ] as const),
   confidence: z.number().min(0).max(1),
   needsApiCall: z.boolean(),
@@ -75,7 +80,17 @@ const queryAnalysisSchema = z.object({
   timeContext: z.enum(['current', '24h', '7d', '30d'] as const).nullable(),
   marketIndicators: z.array(z.string()),
   conceptualIndicators: z.array(z.string()),
-  webSearchContext: webSearchContextSchema
+  webSearchContext: webSearchContextSchema,
+  // Optional blockchain-related fields
+  detectedEntities: z.array(z.string()).optional(),
+  entityParams: z.object({
+    name: z.string().nullable(),
+    symbol: z.string().nullable(),
+    initialSupply: z.string().nullable()
+  }).optional(),
+  recipient: z.string().nullable().optional(),
+  amount: z.string().nullable().optional(),
+  tokenAddress: z.string().nullable().optional()
 });
 
 const marketDataSchema = z.object({

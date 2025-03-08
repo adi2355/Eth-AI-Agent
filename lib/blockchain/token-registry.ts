@@ -1,7 +1,7 @@
 import { createPublicClient, http, getContract, PublicClient } from 'viem';
 import { mainnet, sepolia, optimism, arbitrum } from 'viem/chains';
 import { erc20Abi } from './abis/erc20-abi';
-import { walletService, TransactionOptions } from './wallet-integration';
+import { TransactionOptions, WalletIntegrationService } from './wallet-integration';
 import { parseAbi, encodeFunctionData } from 'viem';
 
 // Token information interface
@@ -187,12 +187,13 @@ export class TokenRegistry {
   
   // Transfer tokens
   async transfer(
+    walletServiceInstance: WalletIntegrationService,
     tokenAddress: `0x${string}`, 
     to: `0x${string}`, 
     amount: bigint, 
     chainId: number
   ): Promise<`0x${string}`> {
-    if (!walletService.isConnected()) {
+    if (!walletServiceInstance.isConnected()) {
       throw new Error('Wallet not connected');
     }
     
@@ -211,17 +212,18 @@ export class TokenRegistry {
     };
     
     // Send the transaction
-    return walletService.sendTransaction(txOptions);
+    return walletServiceInstance.sendTransaction(txOptions);
   }
   
   // Approve token spending
   async approve(
+    walletServiceInstance: WalletIntegrationService,
     tokenAddress: `0x${string}`, 
     spender: `0x${string}`, 
     amount: bigint, 
     chainId: number
   ): Promise<`0x${string}`> {
-    if (!walletService.isConnected()) {
+    if (!walletServiceInstance.isConnected()) {
       throw new Error('Wallet not connected');
     }
     
@@ -240,7 +242,7 @@ export class TokenRegistry {
     };
     
     // Send the transaction
-    return walletService.sendTransaction(txOptions);
+    return walletServiceInstance.sendTransaction(txOptions);
   }
   
   // Get token allowance

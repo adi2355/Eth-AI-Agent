@@ -65,14 +65,49 @@ const SECURITY_PATTERNS = [
   }
 ];
 
-// Validate a contract for security issues
-export async function validateContract(source: string): Promise<ValidationResult> {
+/**
+ * Validate contract ABI and bytecode
+ * @param abiOrSource Contract ABI or source code
+ * @param bytecode Contract bytecode (optional)
+ * @returns Validation result
+ */
+export function validateContract(abiOrSource: any, bytecode?: string): ValidationResult {
+  try {
+    // Determine if we're validating source code or ABI
+    const isSourceCode = typeof abiOrSource === 'string' && !abiOrSource.startsWith('[');
+    
+    if (isSourceCode) {
+      // Validate source code
+      return validateSourceCode(abiOrSource);
+    } else {
+      // Validate ABI
+      return validateABI(abiOrSource, bytecode);
+    }
+  } catch (error) {
+    console.error('Contract validation error:', error);
+    return {
+      valid: false,
+      issues: [{
+        severity: 'high',
+        title: 'Validation error',
+        description: `Failed to validate contract: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }]
+    };
+  }
+}
+
+/**
+ * Validate contract source code
+ * @param source Contract source code
+ * @returns Validation result
+ */
+function validateSourceCode(source: string): ValidationResult {
+  // Start with empty issues array
   const issues: SecurityIssue[] = [];
   
-  // Check for security patterns
+  // Check for security patterns in the source code
   for (const pattern of SECURITY_PATTERNS) {
-    const matches = source.match(pattern.pattern);
-    if (matches) {
+    if (pattern.pattern.test(source)) {
       issues.push({
         severity: pattern.severity,
         title: pattern.title,
@@ -81,76 +116,127 @@ export async function validateContract(source: string): Promise<ValidationResult
     }
   }
   
-  // Check for reentrancy vulnerabilities
-  if (
-    source.includes('.call{value:') && 
-    !source.includes('ReentrancyGuard') && 
-    !source.includes('nonReentrant')
-  ) {
-    issues.push({
-      severity: 'high',
-      title: 'Potential reentrancy vulnerability',
-      description: 'Contract uses .call{value:} without reentrancy protection. Consider using ReentrancyGuard.'
-    });
-  }
-  
-  // Check for unchecked external calls
-  if (
-    (source.includes('.call(') || source.includes('.call{')) && 
-    !source.match(/require\s*\(\s*\w+\s*\)/)
-  ) {
-    issues.push({
-      severity: 'medium',
-      title: 'Unchecked external call',
-      description: 'External call result is not checked. Always verify the return value of low-level calls.'
-    });
-  }
-  
-  // Check for unbounded loops
-  if (source.match(/for\s*\(\s*.*;\s*.*;\s*.*\)/)) {
-    const hasArrayLength = source.match(/for\s*\(\s*.*;\s*\w+\s*<\s*\w+\.length/);
-    if (hasArrayLength) {
-      issues.push({
-        severity: 'medium',
-        title: 'Potentially unbounded loop',
-        description: 'Loop over array without fixed bounds could run out of gas for large arrays.'
-      });
+  // Check for high-risk patterns more precisely (with context)
+  const lines = source.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Check for reentrancy vulnerabilities
+    if (
+      /\.call\s*\{/.test(line) &&
+      !/(\s|^)if\s*\(/.test(line) &&
+      !/(return|revert|require)\s/.test(line)
+    ) {
+      // Look for state changes after external calls
+      let j = i + 1;
+      let stateChangeAfterCall = false;
+      
+      while (j < Math.min(lines.length, i + 10)) {
+        if (/\=\s/.test(lines[j])) {
+          stateChangeAfterCall = true;
+          break;
+        }
+        j++;
+      }
+      
+      if (stateChangeAfterCall) {
+        issues.push({
+          severity: 'high',
+          title: 'Potential reentrancy vulnerability',
+          description: 'External call is followed by state changes, which could lead to reentrancy attacks.',
+          line: i + 1
+        });
+      }
     }
   }
   
-  // Check for proper visibility
-  if (source.match(/function\s+\w+\s*\([^)]*\)\s*\{/)) {
-    issues.push({
-      severity: 'medium',
-      title: 'Missing function visibility',
-      description: 'Functions without explicit visibility default to public.'
-    });
-  }
-  
-  // Check for state variables without visibility
-  if (source.match(/^\s*\w+\s+\w+\s*;/m)) {
-    issues.push({
-      severity: 'low',
-      title: 'State variable missing visibility',
-      description: 'State variables should have explicit visibility (public, private, internal).'
-    });
-  }
-  
-  // Determine if the contract is valid based on high severity issues
-  const hasHighSeverityIssues = issues.some(issue => issue.severity === 'high');
-  
   return {
-    valid: !hasHighSeverityIssues,
+    valid: issues.filter(issue => issue.severity === 'high').length === 0,
     issues
   };
 }
 
-// Validate a transaction before sending
-export async function validateTransaction(
+/**
+ * Validate contract ABI and bytecode
+ * @param abi Contract ABI
+ * @param bytecode Contract bytecode
+ * @returns Validation result
+ */
+function validateABI(abi: any, bytecode?: string): ValidationResult {
+  const issues: SecurityIssue[] = [];
+  
+  // Check for common issues in ABI
+  try {
+    // Parse ABI if it's a string
+    const parsedAbi = typeof abi === 'string' ? JSON.parse(abi) : abi;
+    
+    // Check for payable fallback function
+    const hasFallback = parsedAbi.some((item: any) => 
+      item.type === 'fallback' && item.stateMutability === 'payable'
+    );
+    
+    if (hasFallback) {
+      issues.push({
+        severity: 'medium',
+        title: 'Payable fallback function',
+        description: 'Contract has a payable fallback function which can receive ETH without explicit function calls.'
+      });
+    }
+    
+    // Check for selfdestruct
+    const hasSelfDestruct = parsedAbi.some((item: any) => 
+      item.type === 'function' && 
+      (item.name === 'selfdestruct' || item.name === 'suicide' || 
+       item.name.toLowerCase().includes('destruct') || item.name.toLowerCase().includes('kill'))
+    );
+    
+    if (hasSelfDestruct) {
+      issues.push({
+        severity: 'high',
+        title: 'Self-destruct function',
+        description: 'Contract contains a function that may destroy the contract permanently.'
+      });
+    }
+  } catch (error) {
+    issues.push({
+      severity: 'medium',
+      title: 'Invalid ABI',
+      description: 'Could not parse the contract ABI.'
+    });
+  }
+  
+  // Check bytecode if provided
+  if (bytecode) {
+    // Check if bytecode is empty
+    if (bytecode === '0x' || bytecode === '') {
+      issues.push({
+        severity: 'high',
+        title: 'Empty bytecode',
+        description: 'Contract bytecode is empty, which means it cannot be deployed.'
+      });
+    }
+    
+    // Additional bytecode checks can be added here
+  }
+  
+  return {
+    valid: issues.filter(issue => issue.severity === 'high').length === 0,
+    issues
+  };
+}
+
+/**
+ * Validate transaction parameters
+ * @param to Recipient address
+ * @param value Transaction value
+ * @param data Transaction data (optional)
+ * @returns Validation result
+ */
+export function validateTransaction(
   to: string, 
-  value: bigint, 
-  data: string | undefined
-): Promise<ValidationResult> {
+  value: bigint,
+  data?: string
+): ValidationResult {
   const issues: SecurityIssue[] = [];
   
   // Check if sending to address(0)

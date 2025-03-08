@@ -2,6 +2,8 @@ import { createWalletClient, http, custom, parseEther, parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { mainnet, sepolia, arbitrum } from 'viem/chains';
 import { publicClient } from './providers';
+import { USE_MOCKS } from './config';
+import * as mockProvider from './mock-provider';
 
 // Supported wallet types
 export type WalletType = 'metamask' | 'walletconnect' | 'private-key' | 'hardware';
@@ -39,6 +41,14 @@ export class WalletIntegrationService {
         console.log('Server-side wallet connection requested, returning mock address');
         // Return a mock address for server-side rendering
         return '0x0000000000000000000000000000000000000000';
+      }
+      
+      // Use mock provider if mocks are enabled
+      if (USE_MOCKS) {
+        console.log('Using mock provider for wallet connection');
+        const address = await mockProvider.mockConnect();
+        this.connectedAddress = address;
+        return this.connectedAddress;
       }
       
       const chainId = options.chainId || 1; // Default to Ethereum mainnet
@@ -120,11 +130,19 @@ export class WalletIntegrationService {
 
   // Check if wallet is connected
   isConnected(): boolean {
-    return this.walletClient !== null && this.connectedAddress !== null;
+    if (USE_MOCKS) {
+      return mockProvider.mockIsConnected();
+    }
+    
+    return !!this.walletClient && !!this.connectedAddress;
   }
 
   // Get connected address
   getAddress(): `0x${string}` {
+    if (USE_MOCKS) {
+      return mockProvider.mockGetAddress() as `0x${string}`;
+    }
+    
     if (!this.isConnected()) {
       throw new Error('Wallet not connected');
     }
@@ -136,7 +154,11 @@ export class WalletIntegrationService {
     if (!this.isConnected()) {
       throw new Error('Wallet not connected');
     }
-
+    
+    if (USE_MOCKS) {
+      return mockProvider.mockSendTransaction(options) as `0x${string}`;
+    }
+    
     try {
       // If gas parameters aren't provided, estimate them
       if (!options.maxFeePerGas || !options.maxPriorityFeePerGas) {
@@ -194,6 +216,10 @@ export class WalletIntegrationService {
 
   // Wait for transaction confirmation
   async waitForTransaction(hash: `0x${string}`, confirmations = 1): Promise<any> {
+    if (USE_MOCKS) {
+      return mockProvider.mockWaitForTransaction(hash, confirmations);
+    }
+    
     try {
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
@@ -235,11 +261,19 @@ export class WalletIntegrationService {
 
   // Get transaction by hash
   getTransaction(hash: `0x${string}`): any {
-    return this.pendingTransactions.get(hash);
+    if (USE_MOCKS) {
+      return mockProvider.mockGetTransaction(hash);
+    }
+    
+    return this.pendingTransactions.get(hash) || null;
   }
 
   // Disconnect wallet
   disconnect(): void {
+    if (USE_MOCKS) {
+      mockProvider.mockDisconnect();
+    }
+    
     this.walletClient = null;
     this.connectedAddress = '0x0000000000000000000000000000000000000000';
     this.connectedChainId = null;
