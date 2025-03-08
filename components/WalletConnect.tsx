@@ -7,7 +7,11 @@ import { Wallet, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { blockchainApi } from '@/lib/api/blockchain-api';
 
-export function WalletConnect() {
+interface WalletConnectProps {
+  onConnect?: (address: string) => void;
+}
+
+export function WalletConnect({ onConnect }: WalletConnectProps) {
   const { address, isConnected } = useAccount();
   const { connectAsync } = useConnect();
   const { disconnect } = useDisconnect();
@@ -19,6 +23,13 @@ export function WalletConnect() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Call onConnect when address changes
+  useEffect(() => {
+    if (isConnected && address && onConnect) {
+      onConnect(address);
+    }
+  }, [address, isConnected, onConnect]);
 
   const handleSignIn = async () => {
     if (!address) return;
@@ -75,6 +86,12 @@ export function WalletConnect() {
       try {
         const connectedAddress = await blockchainApi.connectWallet('metamask');
         console.log('Connected via blockchain API:', connectedAddress);
+        
+        // Call onConnect callback if provided
+        if (onConnect) {
+          onConnect(connectedAddress);
+        }
+        
         // If we get here, we're connected
         await handleSignIn();
         return;
@@ -88,6 +105,11 @@ export function WalletConnect() {
         connector: injected(),
       });
       if (result?.accounts?.[0]) {
+        // Call onConnect callback if provided
+        if (onConnect) {
+          onConnect(result.accounts[0]);
+        }
+        
         await handleSignIn();
       }
     } catch (error) {

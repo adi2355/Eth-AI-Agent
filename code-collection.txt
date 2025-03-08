@@ -117,6 +117,92 @@ export async function POST(req: Request) {
 }
 
 ================================================================================
+File: app/api/blockchain/route.ts
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server';
+import { blockchainOrchestrator } from '@/lib/agents/blockchain-orchestrator';
+import { BlockchainActionParams } from '@/lib/agents/blockchain-orchestrator';
+import { sessionManager } from '@/lib/blockchain/session-manager';
+import { WalletIntegrationService } from '@/lib/blockchain/wallet-integration';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { action, sessionId } = body;
+    
+    if (!action || !action.actionType) {
+      return NextResponse.json(
+        { error: 'Invalid request: actionType is required' },
+        { status: 400 }
+      );
+    }
+    
+    // Special handling for wallet connections
+    if (action.actionType === 'CONNECT_WALLET') {
+      // Create a session ID if not provided
+      const effectiveSessionId = sessionId || 'default-session';
+      
+      try {
+        // Create a mock wallet service for server-side
+        const walletService = new WalletIntegrationService();
+        
+        // Use a mock address for the server-side connection
+        const mockAddress = '0x0000000000000000000000000000000000000000' as `0x${string}`;
+        
+        // Register this mock connection in the session manager
+        sessionManager.storeConnection(
+          effectiveSessionId,
+          walletService,
+          mockAddress,
+          action.walletParams?.chainId || 1
+        );
+        
+        console.log(`Registered mock wallet connection for session ${effectiveSessionId}`);
+        
+        // Return success response with the mock address
+        return NextResponse.json({
+          success: true,
+          actionType: 'CONNECT_WALLET',
+          data: {
+            address: mockAddress,
+            needsBrowserConnection: true
+          }
+        });
+      } catch (error) {
+        console.error('Error setting up mock wallet connection:', error);
+        return NextResponse.json({
+          success: false,
+          actionType: 'CONNECT_WALLET',
+          error: 'Failed to set up mock wallet connection'
+        });
+      }
+    }
+    
+    // Add session ID to action params if provided
+    const actionWithSession: BlockchainActionParams = {
+      ...action,
+      sessionId: sessionId || 'default-session'
+    };
+    
+    // For other actions, execute them on the server
+    const result = await blockchainOrchestrator.handleAction(actionWithSession);
+    
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error('Blockchain API error:', error);
+    
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      },
+      { status: 500 }
+    );
+  }
+} 
+
+================================================================================
 File: app/api/chat/route.ts
 ================================================================================
 
@@ -267,6 +353,376 @@ const handler = withAuth(
 );
 
 export { handler as GET };
+
+================================================================================
+File: app/blockchain-test/page.tsx
+================================================================================
+
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
+import { Loader2, Wallet, Send, FileCode, Blocks, AlertCircle } from 'lucide-react';
+import { WalletConnect } from '@/components/WalletConnect';
+import { blockchainApi } from '@/lib/api/blockchain-api';
+import { USE_MOCKS, USE_HARDHAT, USE_TESTNET, DEFAULT_NETWORK } from '@/lib/blockchain/config';
+
+export default function BlockchainTestPage() {
+  const [activeTab, setActiveTab] = useState('wallet');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState('');
+  
+  // Transfer state
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [tokenAddress, setTokenAddress] = useState('');
+  const [txHash, setTxHash] = useState('');
+  
+  // Contract deployment state
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [tokenName, setTokenName] = useState('Test Token');
+  const [tokenSymbol, setTokenSymbol] = useState('TEST');
+  const [tokenDecimals, setTokenDecimals] = useState('18');
+  const [tokenSupply, setTokenSupply] = useState('1000000');
+  
+  useEffect(() => {
+    // Determine environment
+    let envType = 'Unknown';
+    if (USE_MOCKS) envType = 'Mock Implementation';
+    else if (USE_HARDHAT) envType = 'Local Hardhat Network';
+    else if (USE_TESTNET) envType = 'Public Testnet (Sepolia)';
+    else envType = 'Mainnet';
+    
+    setEnvironment(`${envType} (${DEFAULT_NETWORK})`);
+    
+    // Load contract templates
+    loadTemplates();
+  }, []);
+  
+  const loadTemplates = async () => {
+    try {
+      const templates = await blockchainApi.getContractTemplates();
+      setTemplates(templates);
+      if (templates.length > 0) {
+        setSelectedTemplate(templates[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load templates:', err);
+    }
+  };
+  
+  const handleTransfer = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const result = await blockchainApi.transferTokens(
+        recipient,
+        amount,
+        tokenAddress || undefined
+      );
+      
+      setTxHash(result.transactionHash);
+      setSuccess(`Transaction submitted: ${result.transactionHash}`);
+    } catch (err: any) {
+      setError(err.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleDeploy = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      // For SimpleToken template, provide parameters
+      const params = {
+        name: tokenName,
+        symbol: tokenSymbol,
+        decimals: parseInt(tokenDecimals, 10),
+        initialSupply: tokenSupply
+      };
+      
+      const result = await blockchainApi.deployContract(
+        selectedTemplate,
+        params
+      );
+      
+      setTxHash(result.transactionHash);
+      setSuccess(`Contract deployed: ${result.contractAddress}`);
+    } catch (err: any) {
+      setError(err.message || 'Deployment failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleRefreshStatus = async () => {
+    if (!txHash) return;
+    
+    setLoading(true);
+    try {
+      if (activeTab === 'transfer') {
+        const status = await blockchainApi.getTransferStatus(txHash);
+        setSuccess(`Status: ${status.status}, Confirmations: ${status.confirmations}`);
+      } else if (activeTab === 'deploy') {
+        const status = await blockchainApi.getDeploymentStatus(txHash);
+        setSuccess(`Status: ${status.status}, Contract: ${status.contractAddress}, Confirmations: ${status.confirmations}`);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to get status');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <div className="container mx-auto py-10">
+      <Card>
+        <CardHeader>
+          <CardTitle>Blockchain Testing Interface</CardTitle>
+          <CardDescription>
+            Test blockchain functionality in isolation
+          </CardDescription>
+          <div className="bg-muted p-2 rounded-md text-sm mt-2">
+            <strong>Environment:</strong> {environment}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-6">
+            <WalletConnect />
+          </div>
+          
+          <Tabs defaultValue="wallet" value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid grid-cols-3 mb-6">
+              <TabsTrigger value="wallet">
+                <Wallet className="h-4 w-4 mr-2" />
+                Wallet
+              </TabsTrigger>
+              <TabsTrigger value="transfer">
+                <Send className="h-4 w-4 mr-2" />
+                Transfer
+              </TabsTrigger>
+              <TabsTrigger value="deploy">
+                <FileCode className="h-4 w-4 mr-2" />
+                Deploy Contract
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="wallet">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Wallet Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Connect your wallet using the button above to interact with blockchain functionality.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="transfer">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Transfer Tokens</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="recipient">Recipient Address</Label>
+                        <Input
+                          id="recipient"
+                          placeholder="0x..."
+                          value={recipient}
+                          onChange={(e) => setRecipient(e.target.value)}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="amount">Amount</Label>
+                        <Input
+                          id="amount"
+                          placeholder="1.0"
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value)}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="tokenAddress">Token Address (Optional, leave empty for ETH)</Label>
+                        <Input
+                          id="tokenAddress"
+                          placeholder="0x..."
+                          value={tokenAddress}
+                          onChange={(e) => setTokenAddress(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    
+                    <Button
+                      onClick={handleTransfer}
+                      disabled={loading || !recipient || !amount}
+                      className="w-full"
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>Send Transaction</>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="deploy">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Deploy Contract</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="template">Contract Template</Label>
+                      <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {templates.length === 0 ? (
+                            <SelectItem value="simple-token">Simple Token (ERC20)</SelectItem>
+                          ) : (
+                            templates.map(template => (
+                              <SelectItem key={template.id} value={template.id}>
+                                {template.name}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <Separator />
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="tokenName">Token Name</Label>
+                      <Input
+                        id="tokenName"
+                        value={tokenName}
+                        onChange={(e) => setTokenName(e.target.value)}
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="tokenSymbol">Token Symbol</Label>
+                      <Input
+                        id="tokenSymbol"
+                        value={tokenSymbol}
+                        onChange={(e) => setTokenSymbol(e.target.value)}
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="tokenDecimals">Decimals</Label>
+                        <Input
+                          id="tokenDecimals"
+                          value={tokenDecimals}
+                          onChange={(e) => setTokenDecimals(e.target.value)}
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="tokenSupply">Initial Supply</Label>
+                        <Input
+                          id="tokenSupply"
+                          value={tokenSupply}
+                          onChange={(e) => setTokenSupply(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    
+                    <Button
+                      onClick={handleDeploy}
+                      disabled={loading || !tokenName || !tokenSymbol}
+                      className="w-full"
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Deploying...
+                        </>
+                      ) : (
+                        <>Deploy Contract</>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+          
+          {txHash && (
+            <div className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Transaction Status</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="bg-muted p-2 rounded-md text-sm break-all">
+                      <strong>Transaction Hash:</strong> {txHash}
+                    </div>
+                    
+                    <Button onClick={handleRefreshStatus} disabled={loading}>
+                      {loading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Blocks className="mr-2 h-4 w-4" />
+                      )}
+                      Refresh Status
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {error && (
+            <Alert variant="destructive" className="mt-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          
+          {success && (
+            <Alert className="mt-6 bg-green-50 border-green-300 text-green-800">
+              <AlertDescription>{success}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+} 
 
 ================================================================================
 File: collectcode.js
@@ -423,7 +879,7 @@ File: components/ChatInterface.tsx
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, Loader2, RefreshCcw, ChevronDown, AlertCircle, Info } from 'lucide-react';
+import { Bot, Send, Loader2, RefreshCcw, ChevronDown, AlertCircle, Info, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -435,6 +891,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { v4 as uuidv4 } from 'uuid';
+import { blockchainApi } from '@/lib/api/blockchain-api';
+import { ContractTemplateSelector } from './ContractTemplateSelector';
+import { TransactionForm } from './TransactionForm';
 
 interface ErrorAlert {
   type: 'rate-limit' | 'api-error' | 'not-found' | 'network' | 'unknown';
@@ -487,6 +946,8 @@ const MessageComponent = ({
 }) => {
   const isError = message.error !== undefined;
   const hasApiSource = message.data?.source === 'coingecko' || message.data?.source === 'coinmarketcap';
+  const hasTxData = message.data?.transactionHash;
+  const txStatus = message.data?.status || 'pending';
 
   const messageClasses = [
     "max-w-[80%] rounded-lg px-4 py-2",
@@ -516,6 +977,25 @@ const MessageComponent = ({
           <div className="flex items-center gap-1 text-xs opacity-70 mt-1">
             <Info className="h-3 w-3" />
             <span>Data source: {message.data.source}</span>
+          </div>
+        )}
+
+        {hasTxData && (
+          <div className="mt-2 text-xs border-t pt-2">
+            <div className="flex items-center gap-2">
+              <span className={
+                txStatus === 'success' ? 'text-green-500' :
+                txStatus === 'failed' ? 'text-red-500' :
+                'text-yellow-500'
+              }>
+                {txStatus === 'success' ? '✓' :
+                 txStatus === 'failed' ? '✗' : '⟳'}
+              </span>
+              <span className="font-mono">{message.data.transactionHash.slice(0, 6)}...{message.data.transactionHash.slice(-4)}</span>
+              {txStatus === 'pending' && (
+                <Loader2 className="h-3 w-3 animate-spin ml-2" />
+              )}
+            </div>
           </div>
         )}
 
@@ -594,13 +1074,45 @@ const QUICK_QUERIES = [
   },
 ];
 
+const BLOCKCHAIN_ACTIONS = [
+  {
+    label: 'Deploy ERC20 Token',
+    query: 'I want to deploy an ERC20 token called MyToken with symbol MTK',
+  },
+  {
+    label: 'Send ETH',
+    query: 'I want to send 0.01 ETH',
+  },
+  {
+    label: 'Connect Wallet',
+    query: 'Connect my wallet',
+  },
+];
+
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>(uuidv4());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [transactions, setTransactions] = useState<{
+    hash: string;
+    status: 'pending' | 'success' | 'failed';
+    type: 'transfer' | 'deploy';
+  }[]>([]);
+  const [pendingTransaction, setPendingTransaction] = useState<{
+    type: 'transfer' | 'deploy';
+    params: any;
+  } | null>(null);
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [showTransactionForm, setShowTransactionForm] = useState(false);
+  const [transactionFormValues, setTransactionFormValues] = useState({});
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -611,13 +1123,40 @@ export function ChatInterface() {
   }, [messages]);
 
   useEffect(() => {
-    // Initialize session with UUID
     setSessionId(uuidv4());
   }, []);
 
+  useEffect(() => {
+    blockchainApi.setSessionId(sessionId);
+    
+    setMessages([]);
+    
+    try {
+      const savedMessages = localStorage.getItem(`chat_messages_${sessionId}`);
+      if (savedMessages) {
+        const parsedMessages = JSON.parse(savedMessages);
+        setMessages(parsedMessages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        })));
+      }
+    } catch (error) {
+      console.error('Failed to restore messages:', error);
+    }
+  }, [sessionId]);
+  
+  useEffect(() => {
+    if (messages.length > 0) {
+      try {
+        localStorage.setItem(`chat_messages_${sessionId}`, JSON.stringify(messages));
+      } catch (error) {
+        console.error('Failed to save messages:', error);
+      }
+    }
+  }, [messages, sessionId]);
+
   const handleError = (error: unknown): ErrorAlert => {
     if (error instanceof Error) {
-      // Rate limit errors
       if (error.message.includes('rate limit')) {
         return {
           type: 'rate-limit',
@@ -627,7 +1166,6 @@ export function ChatInterface() {
         };
       }
       
-      // API configuration errors
       if (error.message.includes('API key')) {
         return {
           type: 'api-error',
@@ -637,7 +1175,6 @@ export function ChatInterface() {
         };
       }
 
-      // Not found errors
       if (error.message.includes('not found') || error.message.includes('No data available')) {
         return {
           type: 'not-found',
@@ -647,7 +1184,6 @@ export function ChatInterface() {
         };
       }
 
-      // Network errors
       if (error.message.includes('network') || error.message.includes('ECONNRESET')) {
         return {
           type: 'network',
@@ -759,20 +1295,305 @@ export function ChatInterface() {
     handleSubmit(suggestion);
   };
 
+  const connectWallet = async () => {
+    try {
+      blockchainApi.setSessionId(sessionId);
+      
+      const address = await blockchainApi.connectWallet('metamask');
+      
+      const newMessage: Message = {
+        role: 'assistant',
+        content: `✅ Wallet connected successfully!\n\nAddress: \`${address.slice(0, 6)}...${address.slice(-4)}\`\n\nYou can now perform blockchain operations like deploying contracts and sending transactions.`,
+        timestamp: new Date(),
+        data: {
+          blockchain: {
+            actionType: 'CONNECT_WALLET',
+            address
+          }
+        }
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
+      
+    } catch (error) {
+      console.error('Wallet connection error:', error);
+      
+      const newMessage: Message = {
+        role: 'assistant',
+        content: 'Failed to connect wallet. Please try again.',
+        timestamp: new Date(),
+        error: {
+          type: 'api-error',
+          message: 'Failed to connect wallet',
+          suggestion: error instanceof Error ? error.message : 'Please check if MetaMask is installed and unlocked.',
+          retryable: true
+        }
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
+    }
+  };
+
+  const checkTransactionStatus = async (hash: string, type: 'transfer' | 'deploy') => {
+    try {
+      if (type === 'transfer') {
+        const result = await blockchainApi.getTransferStatus(hash);
+        return {
+          hash,
+          status: result.status as 'pending' | 'success' | 'failed',
+          type
+        };
+      } else {
+        const result = await blockchainApi.getDeploymentStatus(hash);
+        return {
+          hash,
+          status: result.deploymentStatus as 'pending' | 'success' | 'failed',
+          type
+        };
+      }
+    } catch (error) {
+      console.error('Error checking transaction status:', error);
+      return {
+        hash,
+        status: 'failed' as const,
+        type
+      };
+    }
+  };
+
+  useEffect(() => {
+    const txMessages = messages.filter(msg => msg.data?.transactionHash);
+    const newTxs = txMessages.map(msg => ({
+      hash: msg.data.transactionHash as string,
+      status: 'pending' as const,
+      type: msg.content.includes('Contract') ? 'deploy' as const : 'transfer' as const
+    })).filter(tx => !transactions.some(t => t.hash === tx.hash));
+    
+    if (newTxs.length > 0) {
+      setTransactions(prev => [...prev, ...newTxs]);
+    }
+    
+    const interval = setInterval(async () => {
+      const pending = transactions.filter(tx => tx.status === 'pending');
+      if (pending.length === 0) {
+        clearInterval(interval);
+        return;
+      }
+      
+      const updates = await Promise.all(
+        pending.map(tx => checkTransactionStatus(tx.hash, tx.type))
+      );
+      
+      setTransactions(prev => 
+        prev.map(tx => {
+          const update = updates.find(u => u.hash === tx.hash);
+          return update || tx;
+        })
+      );
+      
+      updates
+        .filter(u => u.status !== 'pending')
+        .forEach(tx => {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: tx.status === 'success'
+              ? `${tx.type === 'deploy' ? 'Contract deployment' : 'Transaction'} successful! Hash: ${tx.hash}`
+              : `${tx.type === 'deploy' ? 'Contract deployment' : 'Transaction'} failed. Hash: ${tx.hash}`,
+            timestamp: new Date(),
+            data: { transactionHash: tx.hash, status: tx.status }
+          }]);
+        });
+        
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [messages, transactions]);
+
+  useEffect(() => {
+    const lastAssistantMsg = messages
+      .filter(msg => msg.role === 'assistant')
+      .pop();
+      
+    if (lastAssistantMsg?.data?.blockchain?.actionType === 'TRANSFER_TOKENS') {
+      setPendingTransaction({
+        type: 'transfer',
+        params: lastAssistantMsg.data.blockchain.data
+      });
+    } else if (lastAssistantMsg?.data?.blockchain?.actionType === 'DEPLOY_CONTRACT') {
+      setPendingTransaction({
+        type: 'deploy',
+        params: lastAssistantMsg.data.blockchain.data
+      });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const lastUserMsg = messages
+      .filter(msg => msg.role === 'user')
+      .pop();
+      
+    if (lastUserMsg) {
+      const content = lastUserMsg.content.toLowerCase();
+      
+      if (content.includes('deploy') && 
+          content.includes('contract') && 
+          !content.includes('erc20') &&
+          !content.includes('erc721') &&
+          !content.includes('erc1155')) {
+        setShowTemplateSelector(true);
+      }
+      
+      if ((content.includes('send') || 
+           content.includes('transfer')) &&
+          !content.match(/0x[a-fA-F0-9]{40}/)) {
+        
+        setShowTransactionForm(true);
+        
+        const amount = content.match(/\d+(\.\d+)?/)?.[0];
+        if (amount) {
+          setTransactionFormValues({ amount });
+        }
+      }
+    }
+  }, [messages]);
+
   return (
     <Card className="h-[calc(100vh-12rem)]">
       <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Bot className="h-5 w-5" />
-          Blockchain Assistant
+        <CardTitle className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bot className="h-5 w-5" />
+            Blockchain Assistant
+          </div>
+          <div className="flex items-center gap-2">
+            {walletAddress ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-1 px-3 bg-muted rounded-full">
+                <Wallet className="h-3 w-3" />
+                {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+              </div>
+            ) : (
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={connectWallet} 
+                disabled={isConnecting}
+              >
+                <Wallet className="h-4 w-4 mr-2" />
+                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col h-[calc(100%-5rem)]">
+        {pendingTransaction && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-background p-6 rounded-lg max-w-md w-full">
+              <h3 className="text-lg font-medium mb-4">
+                Confirm {pendingTransaction.type === 'transfer' ? 'Transaction' : 'Contract Deployment'}
+              </h3>
+              
+              {pendingTransaction.type === 'transfer' && (
+                <div className="space-y-2 mb-4">
+                  <p><span className="font-medium">Send:</span> {pendingTransaction.params.amount} {pendingTransaction.params.tokenAddress ? 'tokens' : 'ETH'}</p>
+                  <p><span className="font-medium">To:</span> {pendingTransaction.params.to}</p>
+                  {pendingTransaction.params.tokenAddress && (
+                    <p><span className="font-medium">Token:</span> {pendingTransaction.params.tokenAddress}</p>
+                  )}
+                </div>
+              )}
+              
+              {pendingTransaction.type === 'deploy' && (
+                <div className="space-y-2 mb-4">
+                  <p><span className="font-medium">Contract:</span> {pendingTransaction.params.templateId}</p>
+                  <p><span className="font-medium">Name:</span> {pendingTransaction.params.templateParams?.name}</p>
+                  <p><span className="font-medium">Symbol:</span> {pendingTransaction.params.templateParams?.symbol}</p>
+                </div>
+              )}
+              
+              <div className="flex gap-2 justify-end">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setPendingTransaction(null)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={async () => {
+                    try {
+                      let result;
+                      if (pendingTransaction.type === 'transfer') {
+                        result = await blockchainApi.transferTokens(
+                          pendingTransaction.params.to,
+                          pendingTransaction.params.amount,
+                          pendingTransaction.params.tokenAddress
+                        );
+                      } else {
+                        result = await blockchainApi.deployContract(
+                          pendingTransaction.params.templateId,
+                          pendingTransaction.params.templateParams
+                        );
+                      }
+                      
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: pendingTransaction.type === 'transfer' 
+                          ? `Transaction sent with hash: ${result.transactionHash}` 
+                          : `Contract deployment initiated with hash: ${result.transactionHash}`,
+                        timestamp: new Date(),
+                        data: { transactionHash: result.transactionHash }
+                      }]);
+                    } catch (error) {
+                      console.error('Transaction error:', error);
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                        timestamp: new Date(),
+                        error: {
+                          type: 'api-error',
+                          message: 'Transaction failed',
+                          retryable: true
+                        }
+                      }]);
+                    } finally {
+                      setPendingTransaction(null);
+                    }
+                  }}
+                >
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showTemplateSelector && (
+          <ContractTemplateSelector
+            onSelect={(templateId) => {
+              handleSubmit(`I want to deploy a ${templateId} contract`);
+              setShowTemplateSelector(false);
+            }}
+            onCancel={() => setShowTemplateSelector(false)}
+          />
+        )}
+
+        {showTransactionForm && (
+          <TransactionForm
+            initialValues={transactionFormValues}
+            onSubmit={(data) => {
+              const query = `I want to send ${data.amount} ${data.tokenAddress ? 'tokens' : 'ETH'} to ${data.to}${data.tokenAddress ? ' using token ' + data.tokenAddress : ''}`;
+              handleSubmit(query);
+              setShowTransactionForm(false);
+            }}
+            onCancel={() => setShowTransactionForm(false)}
+          />
+        )}
+
         <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-4">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground p-4">
-              <p>👋 Hi! I can help you explore blockchain data.</p>
-              <p className="mt-2">Try asking about token prices or market trends.</p>
+              <p>👋 Hi! I can help you explore blockchain data and perform transactions.</p>
+              <p className="mt-2">Try asking about token prices or connecting your wallet to make transactions.</p>
             </div>
           )}
           {messages.map((message, index) => (
@@ -817,10 +1638,32 @@ export function ChatInterface() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Wallet className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {BLOCKCHAIN_ACTIONS.map((item, index) => (
+                  <DropdownMenuItem
+                    key={index}
+                    onClick={() => walletAddress || item.label === 'Connect Wallet' ? 
+                                   handleSubmit(item.query) : 
+                                   connectWallet()}
+                    disabled={!walletAddress && item.label !== 'Connect Wallet'}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about token prices or trends (e.g., 'What is Bitcoin's price?')"
+              placeholder="Ask about tokens or blockchain operations..."
               disabled={isLoading}
               className="flex-1"
             />
@@ -833,6 +1676,120 @@ export function ChatInterface() {
     </Card>
   );
 }
+
+================================================================================
+File: components/ContractTemplateSelector.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { blockchainApi } from '@/lib/api/blockchain-api';
+import { Loader2 } from 'lucide-react';
+
+type ContractTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+};
+
+interface ContractTemplateSelectorProps {
+  onSelect: (templateId: string) => void;
+  onCancel: () => void;
+}
+
+export function ContractTemplateSelector({ onSelect, onCancel }: ContractTemplateSelectorProps) {
+  const [templates, setTemplates] = useState<ContractTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const allTemplates = await blockchainApi.getContractTemplates();
+        setTemplates(allTemplates);
+      } catch (error) {
+        console.error('Error loading templates:', error);
+        // Fallback templates if API fails
+        setTemplates([
+          {
+            id: 'ERC20',
+            name: 'ERC20 Token',
+            description: 'Standard fungible token for currencies and assets',
+            category: 'token'
+          },
+          {
+            id: 'ERC721',
+            name: 'ERC721 NFT',
+            description: 'Non-fungible token for unique digital assets',
+            category: 'nft'
+          },
+          {
+            id: 'ERC1155',
+            name: 'ERC1155 Multi-Token',
+            description: 'Multi-token standard for both fungible and non-fungible tokens',
+            category: 'token'
+          }
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadTemplates();
+  }, []);
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <Card className="max-w-2xl w-full max-h-[80vh] overflow-auto">
+        <CardHeader>
+          <CardTitle>Select Contract Template</CardTitle>
+          <CardDescription>
+            Choose a template to deploy your smart contract
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {loading ? (
+              <div className="col-span-2 py-8 text-center">
+                <div className="flex justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+                <p className="mt-4">Loading templates...</p>
+              </div>
+            ) : (
+              <>
+                {templates.map((template) => (
+                  <Card 
+                    key={template.id} 
+                    className="cursor-pointer hover:border-primary transition-colors"
+                    onClick={() => onSelect(template.id)}
+                  >
+                    <CardHeader className="p-4">
+                      <CardTitle className="text-base">{template.name}</CardTitle>
+                      <CardDescription>{template.category}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-4 pt-0">
+                      <p className="text-sm">{template.description}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            )}
+          </div>
+          
+          <div className="flex justify-end mt-6">
+            <Button variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+} 
 
 ================================================================================
 File: components/ErrorBoundary.tsx
@@ -928,6 +1885,181 @@ export class ErrorBoundary extends React.Component<Props, State> {
     return this.props.children;
   }
 }
+
+================================================================================
+File: components/TransactionForm.tsx
+================================================================================
+
+"use client";
+
+import { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+interface TransactionFormProps {
+  onSubmit: (data: any) => void;
+  onCancel: () => void;
+  initialValues?: {
+    recipient?: string;
+    amount?: string;
+    tokenAddress?: string;
+  };
+}
+
+export function TransactionForm({ onSubmit, onCancel, initialValues = {} }: TransactionFormProps) {
+  const [formData, setFormData] = useState({
+    recipient: initialValues.recipient || '',
+    amount: initialValues.amount || '0.01',
+    tokenAddress: initialValues.tokenAddress || '',
+    type: initialValues.tokenAddress ? 'token' : 'eth'
+  });
+  
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      to: formData.recipient,
+      amount: formData.amount,
+      tokenAddress: formData.type === 'token' ? formData.tokenAddress : null
+    });
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <Card className="max-w-md w-full">
+        <CardHeader>
+          <CardTitle>Send Transaction</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit}>
+            <Tabs defaultValue={formData.type} onValueChange={value => setFormData(prev => ({ ...prev, type: value }))}>
+              <TabsList className="grid grid-cols-2 mb-4">
+                <TabsTrigger value="eth">Send ETH</TabsTrigger>
+                <TabsTrigger value="token">Send Tokens</TabsTrigger>
+              </TabsList>
+              
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="recipient">Recipient Address</Label>
+                  <Input
+                    id="recipient"
+                    name="recipient"
+                    value={formData.recipient}
+                    onChange={handleChange}
+                    placeholder="0x..."
+                    required
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="amount">Amount</Label>
+                  <Input
+                    id="amount"
+                    name="amount"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    value={formData.amount}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+                
+                <TabsContent value="token">
+                  <div className="space-y-2">
+                    <Label htmlFor="tokenAddress">Token Contract Address</Label>
+                    <Input
+                      id="tokenAddress"
+                      name="tokenAddress"
+                      value={formData.tokenAddress}
+                      onChange={handleChange}
+                      placeholder="0x..."
+                      required={formData.type === 'token'}
+                    />
+                  </div>
+                </TabsContent>
+              </div>
+              
+              <div className="flex justify-end gap-2 mt-6">
+                <Button type="button" variant="outline" onClick={onCancel}>
+                  Cancel
+                </Button>
+                <Button type="submit">
+                  Send
+                </Button>
+              </div>
+            </Tabs>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+} 
+
+================================================================================
+File: hardhat.config.ts
+================================================================================
+
+import { HardhatUserConfig } from "hardhat/config";
+import "@nomicfoundation/hardhat-toolbox";
+
+// Load environment variables if available
+const PRIVATE_KEY = process.env.PRIVATE_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; // Default hardhat account
+const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/demo";
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
+
+const config: HardhatUserConfig = {
+  solidity: {
+    version: "0.8.20",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+    },
+  },
+  networks: {
+    hardhat: {
+      chainId: 1337, // Standard for local hardhat network
+      mining: {
+        auto: true,
+        interval: 5000, // ms
+      },
+    },
+    localhost: {
+      url: "http://127.0.0.1:8545",
+    },
+    sepolia: {
+      url: SEPOLIA_RPC_URL,
+      accounts: [PRIVATE_KEY],
+    },
+  },
+  paths: {
+    sources: "./contracts",
+    tests: "./test",
+    cache: "./cache",
+    artifacts: "./artifacts",
+  },
+  etherscan: {
+    apiKey: ETHERSCAN_API_KEY,
+  },
+  gasReporter: {
+    enabled: process.env.REPORT_GAS !== undefined,
+    currency: "USD",
+  },
+};
+
+export default config; 
 
 ================================================================================
 File: jsconfig.json
@@ -1151,7 +2283,8 @@ File: lib/agents/blockchain-orchestrator.ts
 
 import { contractDeploymentAgent, DeploymentParams, DeploymentResult } from './deployment/contract-deployment-agent';
 import { tokenTransferAgent, TransferParams, TransferResult } from './transaction/token-transfer-agent';
-import { walletService, WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { sessionManager } from '../blockchain/session-manager';
 import { tokenRegistry, TokenInfo } from '../blockchain/token-registry';
 import { getTemplate, ContractTemplate } from './deployment/contract-templates';
 
@@ -1192,6 +2325,7 @@ export type BlockchainActionType =
 // Blockchain action parameters
 export interface BlockchainActionParams {
   actionType: BlockchainActionType;
+  sessionId?: string;
   walletParams?: WalletConnectionOptions;
   deploymentParams?: DeploymentParams;
   transferParams?: TransferParams;
@@ -1213,18 +2347,21 @@ export class BlockchainOrchestrator {
   // Handle blockchain actions
   async handleAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
     try {
+      // Ensure a session ID is provided for operations that require it
+      const sessionId = params.sessionId || 'default-session';
+      
       switch (params.actionType) {
         case 'CONNECT_WALLET':
-          return await this.connectWallet(params.walletParams!);
+          return await this.connectWallet(sessionId, params.walletParams!);
           
         case 'DISCONNECT_WALLET':
-          return this.disconnectWallet();
+          return this.disconnectWallet(sessionId);
           
         case 'DEPLOY_CONTRACT':
-          return await this.deployContract(params.deploymentParams!);
+          return await this.deployContract(sessionId, params.deploymentParams!);
           
         case 'TRANSFER_TOKENS':
-          return await this.transferTokens(params.transferParams!);
+          return await this.transferTokens(sessionId, params.transferParams!);
           
         case 'GET_TOKEN_INFO':
           return await this.getTokenInfo(params.tokenAddress!, params.chainId!);
@@ -1250,29 +2387,38 @@ export class BlockchainOrchestrator {
       };
     }
   }
-
+  
   // Connect wallet
-  private async connectWallet(params: WalletConnectionOptions): Promise<BlockchainActionResult> {
+  async connectWallet(sessionId: string, options: WalletConnectionOptions): Promise<BlockchainActionResult> {
     try {
-      const address = await walletService.connect(params);
+      const address = await sessionManager.connectWallet(
+        sessionId,
+        options.type,
+        options.chainId
+      );
+      
       return {
         success: true,
         actionType: 'CONNECT_WALLET',
-        data: { address }
+        data: {
+          address
+        }
       };
     } catch (error) {
+      console.error('Wallet connection error:', error);
       return {
         success: false,
         actionType: 'CONNECT_WALLET',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Disconnect wallet
-  private disconnectWallet(): BlockchainActionResult {
+  disconnectWallet(sessionId: string): BlockchainActionResult {
     try {
-      walletService.disconnect();
+      sessionManager.removeConnection(sessionId);
+      
       return {
         success: true,
         actionType: 'DISCONNECT_WALLET'
@@ -1281,43 +2427,63 @@ export class BlockchainOrchestrator {
       return {
         success: false,
         actionType: 'DISCONNECT_WALLET',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to disconnect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Deploy contract
-  private async deployContract(params: DeploymentParams): Promise<BlockchainActionResult> {
+  async deployContract(sessionId: string, params: DeploymentParams): Promise<BlockchainActionResult> {
     try {
-      const result = await contractDeploymentAgent.deployContract(params);
+      // Get wallet service for the session
+      const walletService = sessionManager.getWalletService(sessionId);
+      
+      if (!walletService) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Use the contract deployment agent with the session's wallet
+      const result = await contractDeploymentAgent.deployContract(walletService, params);
+      
       return {
         success: true,
         actionType: 'DEPLOY_CONTRACT',
         data: result
       };
     } catch (error) {
+      console.error('Contract deployment error:', error);
       return {
         success: false,
         actionType: 'DEPLOY_CONTRACT',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to deploy contract: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
-
+  
   // Transfer tokens
-  private async transferTokens(params: TransferParams): Promise<BlockchainActionResult> {
+  async transferTokens(sessionId: string, params: TransferParams): Promise<BlockchainActionResult> {
     try {
-      const result = await tokenTransferAgent.transferTokens(params);
+      // Get wallet service for the session
+      const walletService = sessionManager.getWalletService(sessionId);
+      
+      if (!walletService) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Use the token transfer agent with the session's wallet
+      const result = await tokenTransferAgent.transferTokens(walletService, params);
+      
       return {
         success: true,
         actionType: 'TRANSFER_TOKENS',
         data: result
       };
     } catch (error) {
+      console.error('Token transfer error:', error);
       return {
         success: false,
         actionType: 'TRANSFER_TOKENS',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: `Failed to transfer tokens: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
@@ -1498,65 +2664,64 @@ export class ContractDeploymentAgent {
     throw new Error('Either source or templateId must be provided');
   }
 
-  // Deploy a smart contract
-  async deployContract(params: DeploymentParams): Promise<DeploymentResult> {
+  // Deploy a contract
+  async deployContract(
+    walletServiceInstance: WalletIntegrationService,
+    params: DeploymentParams
+  ): Promise<DeploymentResult> {
     try {
       // Check if wallet is connected
-      if (!walletService.isConnected()) {
+      if (!walletServiceInstance.isConnected()) {
         throw new Error('Wallet not connected');
       }
       
       // Get contract source
       const source = await this.getContractSource(params);
       
-      // Validate contract security
-      const securityResults = await validateContract(source);
-      if (!securityResults.valid) {
-        throw new Error(`Contract failed security validation: ${securityResults.issues.map(i => i.title).join(', ')}`);
-      }
+      // Compile contract
+      const compilation = await compile(source);
       
-      // Compile the contract
-      const compilation = await compile(source, {
-        optimizer: {
-          enabled: true,
-          runs: params.optimizationRuns || 200
-        },
-        version: params.compilerVersion
-      });
-      
+      // Check for compilation errors
       if (compilation.errors && compilation.errors.length > 0) {
-        throw new Error(`Compilation failed: ${compilation.errors.map((e: { message: string }) => e.message).join(', ')}`);
+        const errorMessages = compilation.errors
+          .filter(error => error.severity === 'error')
+          .map(error => error.message)
+          .join('\n');
+        
+        throw new Error(`Compilation failed:\n${errorMessages}`);
       }
       
-      // Find the main contract (assuming it's the last one)
-      const contractNames = Object.keys(compilation.contracts);
-      const contractName = contractNames[contractNames.length - 1];
+      // Get contract info
+      const contractName = Object.keys(compilation.contracts)[0];
       const contract = compilation.contracts[contractName];
       
-      // Prepare deployment data
-      const bytecode = contract.evm.bytecode.object as `0x${string}`;
-      const abi = JSON.parse(contract.abi);
-      
-      // Encode constructor arguments if provided
-      let data = bytecode;
-      if (params.constructorArgs && params.constructorArgs.length > 0) {
-        // Find constructor in ABI
-        const constructorAbi = abi.find((item: any) => item.type === 'constructor');
-        if (constructorAbi) {
-          const encodedArgs = encodeAbiParameters(
-            constructorAbi.inputs,
-            params.constructorArgs
-          );
-          data = `${bytecode}${encodedArgs.slice(2)}`; // remove 0x prefix from args
-        }
+      // Ensure contract has bytecode
+      if (!contract.evm || !contract.evm.bytecode || !contract.evm.bytecode.object) {
+        throw new Error('Compiled contract has no bytecode');
       }
       
+      // Get ABI and bytecode
+      const abi = contract.abi;
+      const bytecode = `0x${contract.evm.bytecode.object}` as `0x${string}`;
+      
+      // Validate contract
+      const securityCheck = validateContract(abi, bytecode);
+      if (!securityCheck.valid) {
+        throw new Error(`Contract security check failed: ${securityCheck.issues.map(i => i.title).join(', ')}`);
+      }
+      
+      // Prepare constructor args
+      const constructorArgs = params.constructorArgs || [];
+      
       // Prepare transaction options
-      const txOptions: TransactionOptions = {
-        to: '0x' as `0x${string}`, // Empty address for contract deployment
-        data: data as `0x${string}`,
-        value: params.value ? WalletIntegrationService.parseEther(params.value) : 0n,
+      const txOptions: any = {
+        data: bytecode
       };
+      
+      // Add value if provided (for payable constructors)
+      if (params.value) {
+        txOptions.value = WalletIntegrationService.parseEther(params.value);
+      }
       
       // Add gas parameters if provided
       if (params.gasLimit) {
@@ -1569,61 +2734,57 @@ export class ContractDeploymentAgent {
         txOptions.maxPriorityFeePerGas = BigInt(params.maxPriorityFeePerGas);
       }
       
-      // Send deployment transaction
-      const hash = await walletService.sendTransaction(txOptions);
+      // Deploy contract
+      const txHash = await walletServiceInstance.sendTransaction(txOptions);
       
-      // Create initial deployment result
+      // Create deployment result
       const deploymentResult: DeploymentResult = {
-        transactionHash: hash,
-        contractAddress: null,
+        transactionHash: txHash,
+        contractAddress: null, // Will be updated after confirmation
         deploymentStatus: 'pending',
         abi,
         bytecode,
-        constructorArgs: params.constructorArgs || []
+        constructorArgs
       };
       
       // Store the deployment
-      this.deployments.set(hash, deploymentResult);
+      this.deployments.set(txHash, deploymentResult);
       
-      // Wait for transaction confirmation in the background
-      this.waitForDeployment(hash, params.verify);
+      // Wait for deployment confirmation in the background
+      this.waitForDeployment(txHash, params.verify || false, walletServiceInstance);
       
       return deploymentResult;
-      
     } catch (error) {
       console.error('Contract deployment error:', error);
-      throw new Error(`Failed to deploy contract: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Contract deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   // Wait for deployment confirmation
-  private async waitForDeployment(hash: `0x${string}`, verify: boolean = false): Promise<void> {
+  private async waitForDeployment(
+    hash: `0x${string}`, 
+    verify: boolean = false,
+    walletServiceInstance: WalletIntegrationService
+  ): Promise<void> {
     try {
       // Wait for transaction receipt
-      const receipt = await walletService.waitForTransaction(hash);
+      const receipt = await walletServiceInstance.waitForTransaction(hash);
       
       // Update deployment result
       const deployment = this.deployments.get(hash);
       if (deployment) {
         deployment.deploymentStatus = receipt.status === 'success' ? 'success' : 'failed';
         deployment.contractAddress = receipt.contractAddress as `0x${string}` || null;
+        deployment.receipt = receipt;
         deployment.gasUsed = receipt.gasUsed;
         deployment.effectiveGasPrice = receipt.effectiveGasPrice;
-        deployment.receipt = receipt;
-        
-        // Verify contract on Etherscan if requested
-        if (verify && receipt.status === 'success' && receipt.contractAddress) {
-          try {
-            // Verification logic would go here
-            // This would typically call the Etherscan API
-            console.log(`Contract verification requested for ${receipt.contractAddress}`);
-          } catch (verifyError) {
-            console.error('Contract verification error:', verifyError);
-            deployment.error = `Deployment succeeded but verification failed: ${verifyError instanceof Error ? verifyError.message : 'Unknown error'}`;
-          }
-        }
         
         this.deployments.set(hash, deployment);
+      }
+      
+      // Verify contract if requested
+      if (verify && deployment && deployment.contractAddress) {
+        // TODO: Implement contract verification
       }
     } catch (error) {
       console.error('Deployment confirmation error:', error);
@@ -1632,7 +2793,7 @@ export class ContractDeploymentAgent {
       const deployment = this.deployments.get(hash);
       if (deployment) {
         deployment.deploymentStatus = 'failed';
-        deployment.error = `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        deployment.error = `Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
         this.deployments.set(hash, deployment);
       }
     }
@@ -1971,8 +3132,6 @@ registerTemplate(simpleStorageTemplate);
 File: lib/agents/deployment/solidity-compiler.ts
 ================================================================================
 
-import * as solc from 'solc';
-
 export interface CompilerOptions {
   optimizer?: {
     enabled: boolean;
@@ -1992,47 +3151,81 @@ export interface CompilationResult {
   }>;
 }
 
+// This is a server-side only module
+// We'll use dynamic imports to ensure it only runs on the server
 export async function compile(source: string, options: CompilerOptions = {}): Promise<CompilationResult> {
-  // Prepare compiler input
-  const input = {
-    language: 'Solidity',
-    sources: {
-      'main.sol': {
-        content: source
-      }
-    },
-    settings: {
-      outputSelection: {
-        '*': {
-          '*': ['abi', 'evm.bytecode', 'evm.deployedBytecode', 'metadata']
-        }
-      },
-      optimizer: options.optimizer || {
-        enabled: false,
-        runs: 200
-      },
-      evmVersion: options.evmVersion || 'paris'
-    }
-  };
-
-  // Compile the contract
-  const output = JSON.parse(solc.compile(JSON.stringify(input)));
-
-  // Check for errors
-  const errors = output.errors?.filter((error: any) => error.severity === 'error');
-  if (errors && errors.length > 0) {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined') {
+    console.error('Solidity compiler cannot run in browser environment');
     return {
       contracts: {},
       sources: {},
-      errors: output.errors
+      errors: [{
+        message: 'Solidity compilation is only available on the server side',
+        severity: 'error',
+        type: 'EnvironmentError'
+      }]
     };
   }
-
-  return {
-    contracts: output.contracts['main.sol'],
-    sources: output.sources,
-    errors: output.errors
-  };
+  
+  try {
+    // Dynamic import to ensure this only runs on the server
+    const solc = await import('solc');
+    
+    // Prepare input for the compiler
+    const input = {
+      language: 'Solidity',
+      sources: {
+        'contract.sol': {
+          content: source
+        }
+      },
+      settings: {
+        outputSelection: {
+          '*': {
+            '*': ['abi', 'evm.bytecode']
+          }
+        },
+        optimizer: options.optimizer || {
+          enabled: false,
+          runs: 200
+        },
+        evmVersion: options.evmVersion || 'london'
+      }
+    };
+    
+    // Compile the contract
+    const output = JSON.parse(solc.compile(JSON.stringify(input)));
+    
+    // Check for errors
+    if (output.errors) {
+      const hasError = output.errors.some((error: any) => error.severity === 'error');
+      if (hasError) {
+        return {
+          contracts: {},
+          sources: {},
+          errors: output.errors
+        };
+      }
+    }
+    
+    return {
+      contracts: output.contracts['contract.sol'],
+      sources: output.sources,
+      errors: output.errors
+    };
+  } catch (error) {
+    console.error('Solidity compilation error:', error);
+    return {
+      contracts: {},
+      sources: {},
+      errors: [{
+        message: error instanceof Error ? error.message : 'Unknown error',
+        severity: 'error',
+        type: 'CompilationError'
+      }]
+    };
+  }
 } 
 
 ================================================================================
@@ -2138,6 +3331,22 @@ CLASSIFICATION CATEGORIES:
     - Context-dependent questions
     Example: "Is it better?", "What's the difference?"
 
+11. DEPLOY_CONTRACT
+    - Requests to deploy smart contracts
+    - Specific contract template mentions
+    - Contract deployment parameters
+    Examples: "Deploy an ERC20 token", "Create a new token called MyToken"
+
+12. TRANSFER_TOKENS
+    - Requests to send tokens or ETH
+    - Mentions of specific recipients and amounts
+    Examples: "Send 0.1 ETH to 0x123...", "Transfer 100 USDC to my friend"
+
+13. CONNECT_WALLET
+    - Requests to connect a wallet
+    - MetaMask or wallet connection mentions
+    Examples: "Connect my wallet", "Link MetaMask"
+
 DETECTION RULES:
 
 1. Token Detection:
@@ -2172,6 +3381,13 @@ DETECTION RULES:
    - Trend analysis periods
    - Future predictions
 
+6. Blockchain Transaction Detection:
+   - Wallet addresses (0x...)
+   - Token amounts and symbols
+   - Contract template names (ERC20, ERC721)
+   - Transaction verbs (send, transfer, deploy, create)
+   - Wallet connection terms (connect, link, integrate)
+
 CRITICAL RESPONSE REQUIREMENTS:
 
 Return a valid JSON response with EXACTLY this structure:
@@ -2180,7 +3396,8 @@ Return a valid JSON response with EXACTLY this structure:
   "classification": {
     "primaryIntent": "MARKET_DATA" | "COMPARISON" | "TECHNICAL" | "DEFI" | 
                     "REGULATORY" | "NEWS_EVENTS" | "SECURITY" | "CONCEPTUAL" | 
-                    "HYBRID" | "NEEDS_CONTEXT",
+                    "HYBRID" | "NEEDS_CONTEXT" | "DEPLOY_CONTRACT" | 
+                    "TRANSFER_TOKENS" | "CONNECT_WALLET",
     "confidence": <number between 0 and 1>,
     "needsApiCall": <boolean>,
     "ambiguityLevel": "LOW" | "MEDIUM" | "HIGH",
@@ -2203,7 +3420,16 @@ Return a valid JSON response with EXACTLY this structure:
       "needed": <boolean>,
       "reason": <string | null>,
       "suggestedQueries": <string[]>
-    }
+    },
+    "detectedEntities": <string[]>,
+    "entityParams": {
+      "name": <string | null>,
+      "symbol": <string | null>,
+      "initialSupply": <string | null>
+    },
+    "recipient": <string | null>,
+    "amount": <string | null>,
+    "tokenAddress": <string | null>
   },
   "dataRequirements": {
     "marketData": {
@@ -2244,7 +3470,12 @@ CRITICAL REQUIREMENTS:
 12. For conceptual/technical queries:
     - Set marketData.needed = false
     - Set marketData.tokenCount = 0
-    - Include relevant aspects in conceptualData`;
+    - Include relevant aspects in conceptualData
+13. For blockchain transactions:
+    - For DEPLOY_CONTRACT: Extract templateId, name, symbol, initialSupply, etc.
+    - For TRANSFER_TOKENS: Extract to (recipient address), amount, tokenAddress (if specified)
+    - For CONNECT_WALLET: Extract wallet type (metamask, walletconnect)
+    - Include detectedEntities, entityParams, recipient, amount, tokenAddress as appropriate`;
 
 function preprocessQuery(query: string): PreprocessingStep[] {
   const steps: PreprocessingStep[] = [];
@@ -2707,14 +3938,49 @@ const SECURITY_PATTERNS = [
   }
 ];
 
-// Validate a contract for security issues
-export async function validateContract(source: string): Promise<ValidationResult> {
+/**
+ * Validate contract ABI and bytecode
+ * @param abiOrSource Contract ABI or source code
+ * @param bytecode Contract bytecode (optional)
+ * @returns Validation result
+ */
+export function validateContract(abiOrSource: any, bytecode?: string): ValidationResult {
+  try {
+    // Determine if we're validating source code or ABI
+    const isSourceCode = typeof abiOrSource === 'string' && !abiOrSource.startsWith('[');
+    
+    if (isSourceCode) {
+      // Validate source code
+      return validateSourceCode(abiOrSource);
+    } else {
+      // Validate ABI
+      return validateABI(abiOrSource, bytecode);
+    }
+  } catch (error) {
+    console.error('Contract validation error:', error);
+    return {
+      valid: false,
+      issues: [{
+        severity: 'high',
+        title: 'Validation error',
+        description: `Failed to validate contract: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }]
+    };
+  }
+}
+
+/**
+ * Validate contract source code
+ * @param source Contract source code
+ * @returns Validation result
+ */
+function validateSourceCode(source: string): ValidationResult {
+  // Start with empty issues array
   const issues: SecurityIssue[] = [];
   
-  // Check for security patterns
+  // Check for security patterns in the source code
   for (const pattern of SECURITY_PATTERNS) {
-    const matches = source.match(pattern.pattern);
-    if (matches) {
+    if (pattern.pattern.test(source)) {
       issues.push({
         severity: pattern.severity,
         title: pattern.title,
@@ -2723,76 +3989,127 @@ export async function validateContract(source: string): Promise<ValidationResult
     }
   }
   
-  // Check for reentrancy vulnerabilities
-  if (
-    source.includes('.call{value:') && 
-    !source.includes('ReentrancyGuard') && 
-    !source.includes('nonReentrant')
-  ) {
-    issues.push({
-      severity: 'high',
-      title: 'Potential reentrancy vulnerability',
-      description: 'Contract uses .call{value:} without reentrancy protection. Consider using ReentrancyGuard.'
-    });
-  }
-  
-  // Check for unchecked external calls
-  if (
-    (source.includes('.call(') || source.includes('.call{')) && 
-    !source.match(/require\s*\(\s*\w+\s*\)/)
-  ) {
-    issues.push({
-      severity: 'medium',
-      title: 'Unchecked external call',
-      description: 'External call result is not checked. Always verify the return value of low-level calls.'
-    });
-  }
-  
-  // Check for unbounded loops
-  if (source.match(/for\s*\(\s*.*;\s*.*;\s*.*\)/)) {
-    const hasArrayLength = source.match(/for\s*\(\s*.*;\s*\w+\s*<\s*\w+\.length/);
-    if (hasArrayLength) {
-      issues.push({
-        severity: 'medium',
-        title: 'Potentially unbounded loop',
-        description: 'Loop over array without fixed bounds could run out of gas for large arrays.'
-      });
+  // Check for high-risk patterns more precisely (with context)
+  const lines = source.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Check for reentrancy vulnerabilities
+    if (
+      /\.call\s*\{/.test(line) &&
+      !/(\s|^)if\s*\(/.test(line) &&
+      !/(return|revert|require)\s/.test(line)
+    ) {
+      // Look for state changes after external calls
+      let j = i + 1;
+      let stateChangeAfterCall = false;
+      
+      while (j < Math.min(lines.length, i + 10)) {
+        if (/\=\s/.test(lines[j])) {
+          stateChangeAfterCall = true;
+          break;
+        }
+        j++;
+      }
+      
+      if (stateChangeAfterCall) {
+        issues.push({
+          severity: 'high',
+          title: 'Potential reentrancy vulnerability',
+          description: 'External call is followed by state changes, which could lead to reentrancy attacks.',
+          line: i + 1
+        });
+      }
     }
   }
   
-  // Check for proper visibility
-  if (source.match(/function\s+\w+\s*\([^)]*\)\s*\{/)) {
-    issues.push({
-      severity: 'medium',
-      title: 'Missing function visibility',
-      description: 'Functions without explicit visibility default to public.'
-    });
-  }
-  
-  // Check for state variables without visibility
-  if (source.match(/^\s*\w+\s+\w+\s*;/m)) {
-    issues.push({
-      severity: 'low',
-      title: 'State variable missing visibility',
-      description: 'State variables should have explicit visibility (public, private, internal).'
-    });
-  }
-  
-  // Determine if the contract is valid based on high severity issues
-  const hasHighSeverityIssues = issues.some(issue => issue.severity === 'high');
-  
   return {
-    valid: !hasHighSeverityIssues,
+    valid: issues.filter(issue => issue.severity === 'high').length === 0,
     issues
   };
 }
 
-// Validate a transaction before sending
-export async function validateTransaction(
+/**
+ * Validate contract ABI and bytecode
+ * @param abi Contract ABI
+ * @param bytecode Contract bytecode
+ * @returns Validation result
+ */
+function validateABI(abi: any, bytecode?: string): ValidationResult {
+  const issues: SecurityIssue[] = [];
+  
+  // Check for common issues in ABI
+  try {
+    // Parse ABI if it's a string
+    const parsedAbi = typeof abi === 'string' ? JSON.parse(abi) : abi;
+    
+    // Check for payable fallback function
+    const hasFallback = parsedAbi.some((item: any) => 
+      item.type === 'fallback' && item.stateMutability === 'payable'
+    );
+    
+    if (hasFallback) {
+      issues.push({
+        severity: 'medium',
+        title: 'Payable fallback function',
+        description: 'Contract has a payable fallback function which can receive ETH without explicit function calls.'
+      });
+    }
+    
+    // Check for selfdestruct
+    const hasSelfDestruct = parsedAbi.some((item: any) => 
+      item.type === 'function' && 
+      (item.name === 'selfdestruct' || item.name === 'suicide' || 
+       item.name.toLowerCase().includes('destruct') || item.name.toLowerCase().includes('kill'))
+    );
+    
+    if (hasSelfDestruct) {
+      issues.push({
+        severity: 'high',
+        title: 'Self-destruct function',
+        description: 'Contract contains a function that may destroy the contract permanently.'
+      });
+    }
+  } catch (error) {
+    issues.push({
+      severity: 'medium',
+      title: 'Invalid ABI',
+      description: 'Could not parse the contract ABI.'
+    });
+  }
+  
+  // Check bytecode if provided
+  if (bytecode) {
+    // Check if bytecode is empty
+    if (bytecode === '0x' || bytecode === '') {
+      issues.push({
+        severity: 'high',
+        title: 'Empty bytecode',
+        description: 'Contract bytecode is empty, which means it cannot be deployed.'
+      });
+    }
+    
+    // Additional bytecode checks can be added here
+  }
+  
+  return {
+    valid: issues.filter(issue => issue.severity === 'high').length === 0,
+    issues
+  };
+}
+
+/**
+ * Validate transaction parameters
+ * @param to Recipient address
+ * @param value Transaction value
+ * @param data Transaction data (optional)
+ * @returns Validation result
+ */
+export function validateTransaction(
   to: string, 
-  value: bigint, 
-  data: string | undefined
-): Promise<ValidationResult> {
+  value: bigint,
+  data?: string
+): ValidationResult {
   const issues: SecurityIssue[] = [];
   
   // Check if sending to address(0)
@@ -2969,6 +4286,23 @@ CONTEXT TYPES AND HANDLING:
    - Reference audits and incidents
    - Include best practices
 
+7. Blockchain Operations (DEPLOY_CONTRACT, TRANSFER_TOKENS, CONNECT_WALLET):
+   - Wallet Connection:
+     - Confirm successful wallet connection
+     - Show abbreviated wallet address
+     - Emphasize transaction capabilities now enabled
+   - Token Transfers:
+     - Confirm transaction submission
+     - Display transaction hash (abbreviated)
+     - Explain next steps (confirmation, block time)
+     - Provide transaction explorer link if available
+   - Contract Deployment:
+     - Confirm deployment transaction submission
+     - Display transaction hash
+     - Explain deployment process
+     - Note contract address will be available after confirmation
+     - Explain verification options if applicable
+
 RESPONSE STRUCTURE:
 
 1. Market Data Format:
@@ -2997,6 +4331,13 @@ RESPONSE STRUCTURE:
    - Standards: Reference specifications
    - Security: Note important considerations
    - Resources: Link to documentation
+
+5. Blockchain Transaction Format:
+   - Status: Confirmed/Pending/Failed
+   - Transaction Hash: Abbreviated (first 6, last 4 chars)
+   - Details: Amount, recipient (abbreviated), token
+   - Confirmations: Number needed and estimated time
+   - Action Items: Verification steps, explorer links
 
 CRITICAL REQUIREMENTS:
 
@@ -3068,6 +4409,31 @@ export async function generateSummary(input: SummarizationInput): Promise<string
       
       if (tokenData) {
         return generateTokenPriceResponse(tokenName, tokenData);
+      }
+    }
+
+    // Handle blockchain-specific responses
+    if (aggregatorResult?.primary?.blockchain) {
+      const blockchainData = aggregatorResult.primary.blockchain;
+      
+      if (blockchainData.actionType === 'CONNECT_WALLET' && blockchainData.success) {
+        return `✅ **Wallet connected successfully!**\n\nAddress: \`${blockchainData.data.address.slice(0, 6)}...${blockchainData.data.address.slice(-4)}\`\n\nYou can now perform blockchain operations like deploying contracts and sending transactions.`;
+      }
+      
+      if (blockchainData.actionType === 'DEPLOY_CONTRACT') {
+        if (blockchainData.success) {
+          return `🚀 **Contract deployment initiated!**\n\nTransaction hash: \`${blockchainData.data.transactionHash.slice(0, 6)}...${blockchainData.data.transactionHash.slice(-4)}\`\n\nYour contract is being deployed to the blockchain. This typically takes 15-60 seconds to confirm. Once confirmed, your contract address will be provided.`;
+        } else {
+          return `❌ **Contract deployment failed**\n\nError: ${blockchainData.error}\n\nPlease check your parameters and try again.`;
+        }
+      }
+      
+      if (blockchainData.actionType === 'TRANSFER_TOKENS') {
+        if (blockchainData.success) {
+          return `💸 **Transaction sent!**\n\nTransaction hash: \`${blockchainData.data.transactionHash.slice(0, 6)}...${blockchainData.data.transactionHash.slice(-4)}\`\n\nYour ${blockchainData.data.tokenAddress ? 'token transfer' : 'ETH transfer'} is being processed. This typically takes 15-60 seconds to confirm.`;
+        } else {
+          return `❌ **Transaction failed**\n\nError: ${blockchainData.error}\n\nPlease check your parameters and try again.`;
+        }
       }
     }
 
@@ -3229,7 +4595,7 @@ export class TokenCache {
 File: lib/agents/transaction/token-transfer-agent.ts
 ================================================================================
 
-import { walletService, WalletIntegrationService } from '../../blockchain/wallet-integration';
+import { WalletIntegrationService } from '../../blockchain/wallet-integration';
 import { tokenRegistry } from '../../blockchain/token-registry';
 import { validateTransaction } from '../security/contract-validator';
 import { publicClient } from '../../blockchain/providers';
@@ -3258,6 +4624,7 @@ export interface TransferResult {
   amount: string;
   amountInWei: bigint;
   status: 'pending' | 'success' | 'failed';
+  confirmations?: number;
   receipt?: any;
   error?: string;
 }
@@ -3266,24 +4633,33 @@ export class TokenTransferAgent {
   private transfers = new Map<string, TransferResult>();
 
   // Transfer ETH or tokens
-  async transferTokens(params: TransferParams): Promise<TransferResult> {
+  async transferTokens(
+    walletServiceInstance: WalletIntegrationService,
+    params: TransferParams
+  ): Promise<TransferResult> {
     try {
-      // Check if wallet is connected
-      if (!walletService.isConnected()) {
-        throw new Error('Wallet not connected');
+      // Validate wallet connection
+      if (!walletServiceInstance) {
+        throw new Error("Wallet service instance not provided");
+      }
+      
+      // Get connected wallet address (don't check .isConnected() as it may be a mock)
+      const fromAddress = walletServiceInstance.getAddress();
+      if (!fromAddress) {
+        throw new Error("Wallet not connected");
       }
       
       // Validate recipient address
       if (!params.to || !params.to.startsWith('0x')) {
-        throw new Error('Invalid recipient address');
+        throw new Error("Invalid recipient address");
       }
       
       // Validate amount
-      if (!params.amount || isNaN(Number(params.amount)) || Number(params.amount) <= 0) {
-        throw new Error('Invalid amount');
+      if (!params.amount || parseFloat(params.amount) <= 0) {
+        throw new Error("Invalid amount");
       }
       
-      // Determine if this is an ETH transfer or token transfer
+      // Determine if this is an ETH or token transfer
       const isEthTransfer = !params.tokenAddress;
       
       let amountInWei: bigint;
@@ -3294,7 +4670,7 @@ export class TokenTransferAgent {
         amountInWei = WalletIntegrationService.parseEther(params.amount);
         
         // Validate transaction
-        const validationResult = await validateTransaction(params.to, amountInWei, undefined);
+        const validationResult = await validateTransaction(params.to, amountInWei);
         if (!validationResult.valid) {
           throw new Error(`Transaction validation failed: ${validationResult.issues.map(i => i.title).join(', ')}`);
         }
@@ -3302,8 +4678,7 @@ export class TokenTransferAgent {
         // Prepare transaction options
         const txOptions: any = {
           to: params.to,
-          value: amountInWei,
-          data: undefined
+          value: amountInWei
         };
         
         // Add gas parameters if provided
@@ -3318,7 +4693,7 @@ export class TokenTransferAgent {
         }
         
         // Send transaction
-        txHash = await walletService.sendTransaction(txOptions);
+        txHash = await walletServiceInstance.sendTransaction(txOptions);
       } else {
         // Token transfer
         // Get token info
@@ -3348,6 +4723,7 @@ export class TokenTransferAgent {
         
         // Transfer tokens
         txHash = await tokenRegistry.transfer(
+          walletServiceInstance,
           params.tokenAddress!,
           params.to,
           amountInWei,
@@ -3369,7 +4745,7 @@ export class TokenTransferAgent {
       this.transfers.set(txHash, transferResult);
       
       // Wait for transaction confirmation in the background
-      this.waitForTransfer(txHash);
+      this.waitForTransfer(txHash, walletServiceInstance);
       
       return transferResult;
     } catch (error) {
@@ -3379,15 +4755,19 @@ export class TokenTransferAgent {
   }
 
   // Wait for transfer confirmation
-  private async waitForTransfer(hash: `0x${string}`): Promise<void> {
+  private async waitForTransfer(
+    hash: `0x${string}`,
+    walletServiceInstance: WalletIntegrationService
+  ): Promise<void> {
     try {
       // Wait for transaction receipt
-      const receipt = await walletService.waitForTransaction(hash);
+      const receipt = await walletServiceInstance.waitForTransaction(hash);
       
       // Update transfer result
       const transfer = this.transfers.get(hash);
       if (transfer) {
         transfer.status = receipt.status === 'success' ? 'success' : 'failed';
+        transfer.confirmations = receipt.confirmations || 1;
         transfer.receipt = receipt;
         
         this.transfers.set(hash, transfer);
@@ -3439,7 +4819,10 @@ export type IntentType =
   | 'SECURITY'
   | 'CONCEPTUAL'
   | 'HYBRID'
-  | 'NEEDS_CONTEXT';
+  | 'NEEDS_CONTEXT'
+  | 'DEPLOY_CONTRACT'
+  | 'TRANSFER_TOKENS'
+  | 'CONNECT_WALLET';
 
 // Market data types expanded
 export type MarketDataType = 
@@ -3575,6 +4958,16 @@ export interface RobustAnalysis {
     marketIndicators: string[];
     conceptualIndicators: string[];
     webSearchContext: WebSearchContext;
+    detectedEntities?: string[];
+    entityParams?: {
+      name?: string;
+      symbol?: string;
+      initialSupply?: string;
+      [key: string]: any;
+    };
+    recipient?: string;
+    amount?: string;
+    tokenAddress?: string;
   };
   dataRequirements: DataRequirements;
 }
@@ -3627,6 +5020,7 @@ export interface AggregatorSpec {
     news?: any;
     regulatory?: any;
     security?: any;
+    blockchain?: any;
   };
   fallback: {
     coingecko?: any;
@@ -3686,7 +5080,12 @@ const classificationSchema = z.object({
     'SECURITY',
     'CONCEPTUAL',
     'HYBRID',
-    'NEEDS_CONTEXT'
+    'NEEDS_CONTEXT',
+    'TRANSFER_TOKENS',
+    'DEPLOY_CONTRACT',
+    'CONNECT_WALLET',
+    'BLOCKCHAIN_TRANSACTION',
+    'NFT_INTERACTION'
   ] as const),
   confidence: z.number().min(0).max(1),
   needsApiCall: z.boolean(),
@@ -3715,7 +5114,17 @@ const queryAnalysisSchema = z.object({
   timeContext: z.enum(['current', '24h', '7d', '30d'] as const).nullable(),
   marketIndicators: z.array(z.string()),
   conceptualIndicators: z.array(z.string()),
-  webSearchContext: webSearchContextSchema
+  webSearchContext: webSearchContextSchema,
+  // Optional blockchain-related fields
+  detectedEntities: z.array(z.string()).optional(),
+  entityParams: z.object({
+    name: z.string().nullable(),
+    symbol: z.string().nullable(),
+    initialSupply: z.string().nullable()
+  }).optional(),
+  recipient: z.string().nullable().optional(),
+  amount: z.string().nullable().optional(),
+  tokenAddress: z.string().nullable().optional()
 });
 
 const marketDataSchema = z.object({
@@ -3852,20 +5261,63 @@ export async function fetchChatResponse(query: string, context: any) {
 File: lib/api/blockchain-api.ts
 ================================================================================
 
-import { blockchainOrchestrator, BlockchainActionParams, BlockchainActionResult } from '../agents/blockchain-orchestrator';
+import { BlockchainActionParams, BlockchainActionResult } from '../agents/blockchain-orchestrator';
 import { TokenInfo } from '../blockchain/token-registry';
 import { DeploymentResult, DeploymentParams } from '../agents/deployment/contract-deployment-agent';
 import { TransferResult, TransferParams } from '../agents/transaction/token-transfer-agent';
 import { ContractTemplate } from '../agents/deployment/contract-templates';
 import { WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { WalletIntegrationService } from '../blockchain/wallet-integration';
 
 /**
  * Blockchain API Service
  * 
  * This service provides a simplified interface for frontend applications
- * to interact with blockchain functionality.
+ * to interact with blockchain functionality via server-side API.
  */
 export class BlockchainApiService {
+  // Session management
+  private sessionId: string | null = null;
+
+  /**
+   * Set the session ID for blockchain operations
+   * @param sessionId Session ID to use
+   */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /**
+   * Get the current session ID
+   * @returns Current session ID or null if not set
+   */
+  getSessionId(): string | null {
+    return this.sessionId;
+  }
+
+  /**
+   * Execute a blockchain action via the server API
+   */
+  private async executeBlockchainAction(action: BlockchainActionParams): Promise<BlockchainActionResult> {
+    const response = await fetch('/api/blockchain', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        action,
+        sessionId: this.sessionId || undefined
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: `Server error: ${response.status}` }));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
   /**
    * Connect to wallet
    * @param provider - Wallet provider (metamask, walletconnect, etc.)
@@ -3876,7 +5328,21 @@ export class BlockchainApiService {
       type: provider as any // Cast to any as a temporary solution
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    try {
+      // First try to connect directly in the browser
+      if (typeof window !== 'undefined') {
+        // We're in the browser, try to connect directly
+        const walletService = new WalletIntegrationService();
+        const address = await walletService.connect(walletParams);
+        return address;
+      }
+    } catch (error) {
+      console.error('Browser wallet connection failed:', error);
+      // Fall through to server-side approach if browser connection fails
+    }
+    
+    // If we're not in the browser or direct connection failed, use the server API
+    const result = await this.executeBlockchainAction({
       actionType: 'CONNECT_WALLET',
       walletParams
     });
@@ -3885,14 +5351,19 @@ export class BlockchainApiService {
       throw new Error(result.error || 'Failed to connect wallet');
     }
     
+    // If the server indicates we need a browser connection, throw an appropriate error
+    if (result.data.needsBrowserConnection) {
+      throw new Error('Wallet connection requires a browser environment');
+    }
+    
     return result.data.address;
   }
   
   /**
    * Disconnect wallet
    */
-  disconnectWallet(): void {
-    blockchainOrchestrator.handleAction({
+  async disconnectWallet(): Promise<void> {
+    await this.executeBlockchainAction({
       actionType: 'DISCONNECT_WALLET'
     });
   }
@@ -3923,7 +5394,7 @@ export class BlockchainApiService {
       maxPriorityFeePerGas: options.maxPriorityFeePerGas
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'DEPLOY_CONTRACT',
       deploymentParams
     });
@@ -3963,7 +5434,7 @@ export class BlockchainApiService {
       maxPriorityFeePerGas: options.maxPriorityFeePerGas
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'TRANSFER_TOKENS',
       transferParams
     });
@@ -3982,7 +5453,7 @@ export class BlockchainApiService {
    * @returns Token information
    */
   async getTokenInfo(tokenAddress: string, chainId: number): Promise<TokenInfo> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_TOKEN_INFO',
       tokenAddress: tokenAddress as `0x${string}`,
       chainId
@@ -4001,7 +5472,7 @@ export class BlockchainApiService {
    * @returns List of contract templates
    */
   async getContractTemplates(category?: string): Promise<ContractTemplate[]> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_CONTRACT_TEMPLATES',
       templateCategory: category
     });
@@ -4019,7 +5490,7 @@ export class BlockchainApiService {
    * @returns Deployment status
    */
   async getDeploymentStatus(transactionHash: string): Promise<DeploymentResult> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_DEPLOYMENT_STATUS',
       transactionHash: transactionHash as `0x${string}`
     });
@@ -4037,7 +5508,7 @@ export class BlockchainApiService {
    * @returns Transfer status
    */
   async getTransferStatus(transactionHash: string): Promise<TransferResult> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_TRANSFER_STATUS',
       transactionHash: transactionHash as `0x${string}`
     });
@@ -4055,7 +5526,7 @@ export class BlockchainApiService {
    * @returns Action result
    */
   async executeAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
-    return blockchainOrchestrator.handleAction(params);
+    return this.executeBlockchainAction(params);
   }
 }
 
@@ -4252,6 +5723,337 @@ export const erc20Abi = [
 ] as const; 
 
 ================================================================================
+File: lib/blockchain/config.ts
+================================================================================
+
+/**
+ * Blockchain Configuration
+ * 
+ * This module provides configuration options for the blockchain integration.
+ * It includes flags for enabling/disabling features based on the environment.
+ */
+
+// Environment detection
+export const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
+export const IS_TEST = process.env.NODE_ENV === 'test';
+export const IS_BROWSER = typeof window !== 'undefined';
+export const IS_SERVER = !IS_BROWSER;
+
+// Feature flags (can be overridden by environment variables)
+export const USE_MOCKS = process.env.USE_BLOCKCHAIN_MOCKS === 'true' || IS_TEST;
+export const USE_HARDHAT = process.env.USE_HARDHAT === 'true' || (IS_DEVELOPMENT && !USE_MOCKS);
+export const USE_TESTNET = process.env.USE_TESTNET === 'true' || (!IS_DEVELOPMENT && !IS_TEST);
+
+// Network configuration
+export const DEFAULT_NETWORK = USE_TESTNET ? 'sepolia' : (USE_HARDHAT ? 'localhost' : 'mainnet');
+export const DEFAULT_CHAIN_ID = getChainIdForNetwork(DEFAULT_NETWORK);
+
+// RPC URLs
+export const RPC_URLS: Record<string, string> = {
+  mainnet: process.env.MAINNET_RPC_URL || 'https://eth-mainnet.g.alchemy.com/v2/demo',
+  sepolia: process.env.SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/demo',
+  localhost: 'http://127.0.0.1:8545',
+};
+
+// Helper function to get chain ID for network
+function getChainIdForNetwork(network: string): number {
+  switch (network) {
+    case 'mainnet': return 1;
+    case 'sepolia': return 11155111;
+    case 'localhost': return 1337;
+    default: return 1;
+  }
+}
+
+// Contract addresses for different networks
+export const CONTRACT_ADDRESSES: Record<string, Record<string, string>> = {
+  // Mainnet contract addresses
+  mainnet: {
+    SimpleToken: process.env.MAINNET_SIMPLE_TOKEN_ADDRESS || '',
+  },
+  
+  // Sepolia contract addresses
+  sepolia: {
+    SimpleToken: process.env.SEPOLIA_SIMPLE_TOKEN_ADDRESS || '',
+  },
+  
+  // Local Hardhat network addresses
+  localhost: {
+    SimpleToken: process.env.LOCAL_SIMPLE_TOKEN_ADDRESS || '0x5FbDB2315678afecb367f032d93F642f64180aa3', // Default first deployment address
+  },
+};
+
+// Get contract address for current network
+export function getContractAddress(contractName: string): string {
+  return CONTRACT_ADDRESSES[DEFAULT_NETWORK]?.[contractName] || '';
+} 
+
+================================================================================
+File: lib/blockchain/mock-provider.ts
+================================================================================
+
+/**
+ * Mock Blockchain Provider
+ * 
+ * This module provides mock implementations of blockchain functionality for testing
+ * and development without requiring a real blockchain connection.
+ */
+
+import { USE_MOCKS } from './config';
+
+// Mock wallet state
+let mockConnected = false;
+let mockAddress = '0x0000000000000000000000000000000000000000';
+let mockBalance = BigInt('1000000000000000000000'); // 1000 ETH
+let mockTokenBalances: Record<string, bigint> = {};
+
+// Mock transaction state
+const mockTransactions = new Map<string, any>();
+let txCounter = 1;
+
+// Mock token data
+const mockTokens: Record<string, any> = {
+  '0x1234567890123456789012345678901234567890': {
+    name: 'Test Token',
+    symbol: 'TEST',
+    decimals: 18,
+    totalSupply: BigInt('1000000000000000000000000'), // 1 million tokens
+  }
+};
+
+/**
+ * Check if mocks are enabled
+ */
+export function isMockEnabled(): boolean {
+  return USE_MOCKS;
+}
+
+/**
+ * Mock connect to wallet
+ */
+export function mockConnect(address?: string): Promise<`0x${string}`> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      mockConnected = true;
+      if (address) {
+        mockAddress = address as `0x${string}`;
+      } else {
+        // Generate a random-looking address if none provided
+        mockAddress = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(40, '0')}` as `0x${string}`;
+      }
+      resolve(mockAddress as `0x${string}`);
+    }, 500); // Simulate network delay
+  });
+}
+
+/**
+ * Mock disconnect wallet
+ */
+export function mockDisconnect(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      mockConnected = false;
+      resolve();
+    }, 300);
+  });
+}
+
+/**
+ * Check if wallet is connected
+ */
+export function mockIsConnected(): boolean {
+  return mockConnected;
+}
+
+/**
+ * Get connected wallet address
+ */
+export function mockGetAddress(): `0x${string}` {
+  return mockConnected ? mockAddress as `0x${string}` : '0x0000000000000000000000000000000000000000';
+}
+
+/**
+ * Mock send transaction
+ */
+export function mockSendTransaction(options: any): Promise<`0x${string}`> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      // Generate mock transaction hash
+      const txHash = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(64, '0')}` as `0x${string}`;
+      
+      // Record the transaction
+      mockTransactions.set(txHash, {
+        hash: txHash,
+        to: options.to,
+        from: mockAddress,
+        value: options.value || BigInt(0),
+        data: options.data || '0x',
+        status: 'pending',
+        timestamp: Date.now(),
+        gasUsed: BigInt(21000),
+        blockNumber: null,
+        confirmations: 0,
+      });
+      
+      // Start confirmation simulation for this transaction
+      simulateConfirmations(txHash);
+      
+      resolve(txHash);
+    }, 1000);
+  });
+}
+
+/**
+ * Simulate transaction confirmations
+ */
+function simulateConfirmations(txHash: string): void {
+  const tx = mockTransactions.get(txHash);
+  if (!tx) return;
+  
+  // Initial confirmation after 2 seconds
+  setTimeout(() => {
+    const updatedTx = mockTransactions.get(txHash);
+    if (updatedTx) {
+      updatedTx.status = 'confirmed';
+      updatedTx.blockNumber = 12345678 + txCounter++;
+      updatedTx.confirmations = 1;
+      mockTransactions.set(txHash, updatedTx);
+      
+      // Simulate more confirmations
+      for (let i = 2; i <= 12; i++) {
+        setTimeout(() => {
+          const tx = mockTransactions.get(txHash);
+          if (tx) {
+            tx.confirmations = i;
+            mockTransactions.set(txHash, tx);
+          }
+        }, i * 1000); // Each confirmation 1 second apart
+      }
+    }
+  }, 2000);
+}
+
+/**
+ * Mock wait for transaction
+ */
+export function mockWaitForTransaction(txHash: string, confirmations = 1): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const checkConfirmation = () => {
+      const tx = mockTransactions.get(txHash);
+      if (!tx) {
+        reject(new Error('Transaction not found'));
+        return;
+      }
+      
+      if (tx.confirmations >= confirmations) {
+        resolve(tx);
+      } else {
+        setTimeout(checkConfirmation, 1000);
+      }
+    };
+    
+    checkConfirmation();
+  });
+}
+
+/**
+ * Mock get transaction
+ */
+export function mockGetTransaction(txHash: string): any {
+  return mockTransactions.get(txHash) || null;
+}
+
+/**
+ * Mock get pending transactions
+ */
+export function mockGetPendingTransactions(): any[] {
+  return Array.from(mockTransactions.values())
+    .filter(tx => tx.status === 'pending');
+}
+
+/**
+ * Mock token transfer
+ */
+export function mockTransferToken(tokenAddress: string, to: string, amount: bigint): Promise<string> {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      const token = mockTokens[tokenAddress];
+      if (!token) {
+        reject(new Error('Token not found'));
+        return;
+      }
+      
+      // Mock successful transfer
+      const txHash = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(64, '0')}`;
+      
+      // Record the transaction
+      mockTransactions.set(txHash, {
+        hash: txHash,
+        to: tokenAddress,
+        from: mockAddress,
+        value: BigInt(0),
+        data: `0xa9059cbb000000000000000000000000${to.substring(2)}${amount.toString(16).padStart(64, '0')}`,
+        status: 'pending',
+        timestamp: Date.now(),
+        gasUsed: BigInt(65000),
+        blockNumber: null,
+        confirmations: 0,
+        tokenTransfer: {
+          token: tokenAddress,
+          from: mockAddress,
+          to: to,
+          amount: amount
+        }
+      });
+      
+      // Start confirmation simulation
+      simulateConfirmations(txHash);
+      
+      resolve(txHash);
+    }, 1500);
+  });
+}
+
+/**
+ * Mock deploy contract
+ */
+export function mockDeployContract(abi: any[], bytecode: string, args: any[]): Promise<any> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      // Generate a contract address
+      const contractAddress = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(40, '0')}`;
+      
+      // Generate mock transaction hash
+      const txHash = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(64, '0')}`;
+      
+      // Record the deployment transaction
+      mockTransactions.set(txHash, {
+        hash: txHash,
+        from: mockAddress,
+        to: null,
+        value: BigInt(0),
+        data: bytecode,
+        status: 'pending',
+        timestamp: Date.now(),
+        gasUsed: BigInt(1500000),
+        blockNumber: null,
+        confirmations: 0,
+        contractAddress: contractAddress
+      });
+      
+      // Start confirmation simulation
+      simulateConfirmations(txHash);
+      
+      // Return the contract
+      resolve({
+        address: contractAddress,
+        deployTransaction: mockTransactions.get(txHash)
+      });
+    }, 2000);
+  });
+} 
+
+================================================================================
 File: lib/blockchain/providers.ts
 ================================================================================
 
@@ -4308,13 +6110,195 @@ export const getClientForChain = (chainId: number) => {
 }; 
 
 ================================================================================
+File: lib/blockchain/session-manager.ts
+================================================================================
+
+/**
+ * Blockchain Session Manager
+ * 
+ * This module provides session management for blockchain operations,
+ * allowing wallet connections to persist between requests.
+ */
+
+import { WalletIntegrationService, WalletType } from './wallet-integration';
+import { USE_MOCKS } from './config';
+
+// Map to store wallet connections by session ID
+interface SessionData {
+  walletService: WalletIntegrationService;
+  address: `0x${string}`;
+  lastActive: number;
+  chainId?: number;
+}
+
+class BlockchainSessionManager {
+  private sessions: Map<string, SessionData> = new Map();
+  
+  // Session timeout in milliseconds (30 minutes)
+  private readonly SESSION_TIMEOUT = 30 * 60 * 1000;
+  
+  /**
+   * Get wallet service for a session
+   * @param sessionId Session ID
+   * @returns Wallet service if connected, undefined otherwise
+   */
+  getWalletService(sessionId: string): WalletIntegrationService | undefined {
+    const session = this.sessions.get(sessionId);
+    
+    if (session) {
+      // Update last active time
+      session.lastActive = Date.now();
+      return session.walletService;
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Get wallet address for a session
+   * @param sessionId Session ID
+   * @returns Wallet address if connected, undefined otherwise
+   */
+  getWalletAddress(sessionId: string): `0x${string}` | undefined {
+    const session = this.sessions.get(sessionId);
+    return session?.address;
+  }
+  
+  /**
+   * Check if a session has a connected wallet
+   * @param sessionId Session ID
+   * @returns true if wallet is connected, false otherwise
+   */
+  isWalletConnected(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    
+    if (!session) {
+      return false;
+    }
+    
+    // Verify wallet is still connected
+    return session.walletService.isConnected();
+  }
+  
+  /**
+   * Store a wallet connection for a session
+   * @param sessionId Session ID
+   * @param walletService Wallet service instance
+   * @param address Wallet address
+   * @param chainId Chain ID
+   */
+  storeConnection(
+    sessionId: string,
+    walletService: WalletIntegrationService,
+    address: `0x${string}`,
+    chainId?: number
+  ): void {
+    // For mock connections, set the mock address
+    if (address === '0x0000000000000000000000000000000000000000') {
+      walletService.setMockAddress(address);
+    }
+    
+    this.sessions.set(sessionId, {
+      walletService,
+      address,
+      lastActive: Date.now(),
+      chainId
+    });
+    
+    console.log(`Stored connection for session ${sessionId}, address: ${address}`);
+    
+    // Make sure cleanup is scheduled
+    this.scheduleCleanup();
+  }
+  
+  /**
+   * Remove a wallet connection for a session
+   * @param sessionId Session ID
+   */
+  removeConnection(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    
+    if (session) {
+      // Disconnect wallet
+      session.walletService.disconnect();
+      // Remove session
+      this.sessions.delete(sessionId);
+    }
+  }
+  
+  /**
+   * Create and connect a new wallet for a session
+   * @param sessionId Session ID
+   * @param provider Wallet provider
+   * @param chainId Chain ID
+   * @returns Connected wallet address
+   */
+  async connectWallet(
+    sessionId: string,
+    provider: string,
+    chainId?: number
+  ): Promise<`0x${string}`> {
+    // Check if we're in a server environment
+    if (typeof window === 'undefined') {
+      console.log('Server-side wallet connection requested, returning mock address');
+      const mockAddress = '0x0000000000000000000000000000000000000000';
+      
+      // Create a mock wallet service
+      const walletService = new WalletIntegrationService();
+      walletService.setMockAddress(mockAddress);
+      
+      // Store the connection
+      this.storeConnection(sessionId, walletService, mockAddress, chainId);
+      
+      return mockAddress;
+    }
+    
+    // For browser environments, use the real wallet connection
+    const walletService = new WalletIntegrationService();
+    const address = await walletService.connect(provider as WalletType, { 
+      type: provider as WalletType,
+      chainId 
+    });
+    
+    // Store the connection
+    this.storeConnection(sessionId, walletService, address, chainId);
+    
+    return address;
+  }
+  
+  /**
+   * Clean up expired sessions
+   */
+  private cleanupSessions(): void {
+    const now = Date.now();
+    
+    for (const [sessionId, session] of this.sessions.entries()) {
+      if (now - session.lastActive > this.SESSION_TIMEOUT) {
+        this.removeConnection(sessionId);
+      }
+    }
+  }
+  
+  /**
+   * Schedule periodic cleanup of expired sessions
+   */
+  private scheduleCleanup(): void {
+    // Run cleanup every 5 minutes
+    setInterval(() => this.cleanupSessions(), 5 * 60 * 1000);
+  }
+}
+
+// Export singleton instance
+export const sessionManager = new BlockchainSessionManager(); 
+
+================================================================================
 File: lib/blockchain/token-registry.ts
 ================================================================================
 
 import { createPublicClient, http, getContract, PublicClient } from 'viem';
 import { mainnet, sepolia, optimism, arbitrum } from 'viem/chains';
 import { erc20Abi } from './abis/erc20-abi';
-import { walletService, TransactionOptions } from './wallet-integration';
+import { TransactionOptions, WalletIntegrationService } from './wallet-integration';
 import { parseAbi, encodeFunctionData } from 'viem';
 
 // Token information interface
@@ -4500,12 +6484,13 @@ export class TokenRegistry {
   
   // Transfer tokens
   async transfer(
+    walletServiceInstance: WalletIntegrationService,
     tokenAddress: `0x${string}`, 
     to: `0x${string}`, 
     amount: bigint, 
     chainId: number
   ): Promise<`0x${string}`> {
-    if (!walletService.isConnected()) {
+    if (!walletServiceInstance.isConnected()) {
       throw new Error('Wallet not connected');
     }
     
@@ -4524,17 +6509,18 @@ export class TokenRegistry {
     };
     
     // Send the transaction
-    return walletService.sendTransaction(txOptions);
+    return walletServiceInstance.sendTransaction(txOptions);
   }
   
   // Approve token spending
   async approve(
+    walletServiceInstance: WalletIntegrationService,
     tokenAddress: `0x${string}`, 
     spender: `0x${string}`, 
     amount: bigint, 
     chainId: number
   ): Promise<`0x${string}`> {
-    if (!walletService.isConnected()) {
+    if (!walletServiceInstance.isConnected()) {
       throw new Error('Wallet not connected');
     }
     
@@ -4553,7 +6539,7 @@ export class TokenRegistry {
     };
     
     // Send the transaction
-    return walletService.sendTransaction(txOptions);
+    return walletServiceInstance.sendTransaction(txOptions);
   }
   
   // Get token allowance
@@ -4621,9 +6607,11 @@ import { createWalletClient, http, custom, parseEther, parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { mainnet, sepolia, arbitrum } from 'viem/chains';
 import { publicClient } from './providers';
+import { USE_MOCKS } from './config';
+import * as mockProvider from './mock-provider';
 
 // Supported wallet types
-export type WalletType = 'metamask' | 'walletconnect' | 'private-key' | 'hardware';
+export type WalletType = 'metamask' | 'walletconnect' | 'private-key' | 'hardware' | 'mock';
 
 // Wallet connection options
 export interface WalletConnectionOptions {
@@ -4647,12 +6635,53 @@ export interface TransactionOptions {
 export class WalletIntegrationService {
   private walletClient: any = null;
   private connectedChainId: number | null = null;
-  private connectedAddress: `0x${string}` | null = null;
+  private connectedAddress: `0x${string}` = '0x0000000000000000000000000000000000000000';
   private pendingTransactions = new Map<string, any>();
+  private walletType: WalletType | null = null;
+  private address: `0x${string}` | null = null;
+  private provider: any = null;
+  private signer: any = null;
+  private chainId: number = 1;
+  private isMockConnection: boolean = false;
 
-  // Connect to a wallet
-  async connect(options: WalletConnectionOptions): Promise<`0x${string}`> {
+  /**
+   * Set a mock wallet address for server-side operations
+   * This allows the wallet to appear as connected without an actual wallet
+   * @param address Mock wallet address
+   */
+  setMockAddress(address: `0x${string}`): void {
+    this.address = address;
+    this.walletType = 'mock';
+    this.isMockConnection = true;
+    console.log(`Set mock wallet address: ${address}`);
+  }
+
+  /**
+   * Connect to a wallet
+   * @param type Type of wallet to connect to
+   * @param options Connection options
+   * @returns Connected wallet address
+   */
+  async connect(
+    type: WalletType = 'metamask',
+    options: WalletConnectionOptions = { type: 'metamask' }
+  ): Promise<`0x${string}`> {
     try {
+      // Check if we're in a server environment
+      if (typeof window === 'undefined') {
+        console.log('Server-side wallet connection requested, returning mock address');
+        // Return a mock address for server-side rendering
+        return '0x0000000000000000000000000000000000000000';
+      }
+      
+      // Use mock provider if mocks are enabled
+      if (USE_MOCKS) {
+        console.log('Using mock provider for wallet connection');
+        const address = await mockProvider.mockConnect();
+        this.connectedAddress = address;
+        return this.connectedAddress;
+      }
+      
       const chainId = options.chainId || 1; // Default to Ethereum mainnet
       let chain;
       
@@ -4672,9 +6701,9 @@ export class WalletIntegrationService {
       }
 
       // Connect based on wallet type
-      switch (options.type) {
+      switch (type) {
         case 'metamask':
-          if (typeof window === 'undefined' || !window.ethereum) {
+          if (!window.ethereum) {
             throw new Error('MetaMask not detected in browser');
           }
           
@@ -4715,8 +6744,16 @@ export class WalletIntegrationService {
         case 'hardware':
           throw new Error('Hardware wallet integration not implemented yet');
           
+        case 'mock':
+          if (this.address) {
+            this.connectedAddress = this.address;
+          } else {
+            this.connectedAddress = '0x0000000000000000000000000000000000000000';
+          }
+          break;
+          
         default:
-          throw new Error(`Wallet type ${options.type} not supported`);
+          throw new Error(`Wallet type ${type} not supported`);
       }
 
       this.connectedChainId = chainId;
@@ -4730,13 +6767,27 @@ export class WalletIntegrationService {
     }
   }
 
-  // Check if wallet is connected
+  /**
+   * Check if wallet is connected
+   * @returns True if wallet is connected
+   */
   isConnected(): boolean {
-    return this.walletClient !== null && this.connectedAddress !== null;
+    if (USE_MOCKS) {
+      return mockProvider.mockIsConnected();
+    }
+    
+    return !!this.walletClient && !!this.connectedAddress || this.isMockConnection;
   }
 
-  // Get connected address
-  getAddress(): `0x${string}` {
+  /**
+   * Get connected wallet address
+   * @returns Wallet address or null if not connected
+   */
+  getAddress(): `0x${string}` | null {
+    if (USE_MOCKS) {
+      return mockProvider.mockGetAddress() as `0x${string}`;
+    }
+    
     if (!this.isConnected()) {
       throw new Error('Wallet not connected');
     }
@@ -4748,7 +6799,11 @@ export class WalletIntegrationService {
     if (!this.isConnected()) {
       throw new Error('Wallet not connected');
     }
-
+    
+    if (USE_MOCKS) {
+      return mockProvider.mockSendTransaction(options) as `0x${string}`;
+    }
+    
     try {
       // If gas parameters aren't provided, estimate them
       if (!options.maxFeePerGas || !options.maxPriorityFeePerGas) {
@@ -4806,6 +6861,10 @@ export class WalletIntegrationService {
 
   // Wait for transaction confirmation
   async waitForTransaction(hash: `0x${string}`, confirmations = 1): Promise<any> {
+    if (USE_MOCKS) {
+      return mockProvider.mockWaitForTransaction(hash, confirmations);
+    }
+    
     try {
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
@@ -4847,13 +6906,21 @@ export class WalletIntegrationService {
 
   // Get transaction by hash
   getTransaction(hash: `0x${string}`): any {
-    return this.pendingTransactions.get(hash);
+    if (USE_MOCKS) {
+      return mockProvider.mockGetTransaction(hash);
+    }
+    
+    return this.pendingTransactions.get(hash) || null;
   }
 
   // Disconnect wallet
   disconnect(): void {
+    if (USE_MOCKS) {
+      mockProvider.mockDisconnect();
+    }
+    
     this.walletClient = null;
-    this.connectedAddress = null;
+    this.connectedAddress = '0x0000000000000000000000000000000000000000';
     this.connectedChainId = null;
     console.log('Wallet disconnected');
   }
@@ -6103,6 +8170,7 @@ import {
 } from './agents';
 import { ConversationStore, ChatMessage } from './conversation-store';
 import { buildEnhancedContext, formatContextForPrompt, analyzeContextContinuity } from './conversation/context-builder';
+import { blockchainOrchestrator, BlockchainActionParams, BlockchainActionType } from './agents/blockchain-orchestrator';
 
 export class AgentOrchestrator {
   constructor() {
@@ -6254,7 +8322,26 @@ export class AgentOrchestrator {
 
       // Step 3: Process based on intent and context with retry
       try {
-        if (analysis.classification.needsApiCall || analysis.classification.requiresWebSearch) {
+        // Check for blockchain intents
+        if (analysis.classification.primaryIntent === 'DEPLOY_CONTRACT' || 
+            analysis.classification.primaryIntent === 'TRANSFER_TOKENS' ||
+            analysis.classification.primaryIntent === 'CONNECT_WALLET') {
+          
+          // Extract blockchain action parameters
+          const blockchainParams = this.extractBlockchainParams(analysis, query);
+          
+          // Execute blockchain action
+          const blockchainResult = await blockchainOrchestrator.handleAction(blockchainParams);
+          
+          // Include the blockchain result in the aggregatorData
+          aggregatorData = {
+            primary: {
+              blockchain: blockchainResult
+            }
+          };
+        } 
+        // Continue with standard processing for non-blockchain intents
+        else if (analysis.classification.needsApiCall || analysis.classification.requiresWebSearch) {
           console.log('Building aggregator spec...');
           const aggregatorSpec = await buildAggregatorCalls(analysis);
           
@@ -6421,6 +8508,46 @@ export class AgentOrchestrator {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled;
+  }
+
+  // Add helper method to extract parameters
+  private extractBlockchainParams(analysis: RobustAnalysis, query: string): BlockchainActionParams {
+    let actionParams: BlockchainActionParams = {
+      actionType: analysis.classification.primaryIntent as BlockchainActionType
+    };
+    
+    // Extract parameters based on intent
+    switch(analysis.classification.primaryIntent) {
+      case 'DEPLOY_CONTRACT':
+        // Extract template name, params
+        actionParams.deploymentParams = {
+          templateId: analysis.queryAnalysis.detectedEntities?.[0] || 'ERC20',
+          templateParams: {
+            name: analysis.queryAnalysis.entityParams?.name || 'MyToken',
+            symbol: analysis.queryAnalysis.entityParams?.symbol || 'MTK'
+            // Other parameters
+          }
+        };
+        break;
+        
+      case 'TRANSFER_TOKENS':
+        // Extract recipient, amount, token
+        actionParams.transferParams = {
+          to: analysis.queryAnalysis.recipient as `0x${string}` || '0x0000000000000000000000000000000000000000',
+          amount: analysis.queryAnalysis.amount || '0.1',
+          tokenAddress: analysis.queryAnalysis.tokenAddress as `0x${string}` || null,
+          chainId: 1 // Default to Ethereum mainnet
+        };
+        break;
+        
+      case 'CONNECT_WALLET':
+        actionParams.walletParams = {
+          type: 'metamask'
+        };
+        break;
+    }
+    
+    return actionParams;
   }
 }
 
@@ -6994,9 +9121,13 @@ File: next.config.js
 ================================================================================
 
 /** @type {import('next').NextConfig} */
-const config = {
+const nextConfig = {
+  reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true,
+  },
+  experimental: {
+    serverComponentsExternalPackages: ['solc'],
   },
   images: { unoptimized: true },
   async headers() {
@@ -7012,9 +9143,28 @@ const config = {
       },
     ];
   },
+  webpack: (config, { isServer }) => {
+    // If client-side (browser), provide empty implementations for Node.js modules
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+        stream: false,
+        path: false,
+        os: false,
+        http: false,
+        https: false,
+        zlib: false,
+      };
+    }
+    return config;
+  },
 };
 
-export default config;
+export default nextConfig;
 
 ================================================================================
 File: package.json
@@ -7030,53 +9180,57 @@ File: package.json
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:agents": "NODE_ENV=test node --loader ts-node/esm tests/agent-tests.ts"
+    "test:agents": "NODE_ENV=test node --loader ts-node/esm tests/agent-tests.ts",
+    "blockchain:node": "hardhat node",
+    "blockchain:deploy": "hardhat run scripts/blockchain/deploy.ts --network localhost",
+    "blockchain:test": "hardhat test"
   },
   "dependencies": {
-    "@hookform/resolvers": "^3.3.4",
+    "@hookform/resolvers": "^3.10.0",
     "@openzeppelin/contracts": "^5.2.0",
-    "@radix-ui/react-accordion": "^1.1.2",
-    "@radix-ui/react-alert-dialog": "^1.0.5",
-    "@radix-ui/react-aspect-ratio": "^1.0.3",
-    "@radix-ui/react-avatar": "^1.0.4",
-    "@radix-ui/react-checkbox": "^1.0.4",
-    "@radix-ui/react-collapsible": "^1.0.3",
-    "@radix-ui/react-context-menu": "^2.1.5",
-    "@radix-ui/react-dialog": "^1.0.5",
-    "@radix-ui/react-dropdown-menu": "^2.0.6",
-    "@radix-ui/react-hover-card": "^1.0.7",
-    "@radix-ui/react-label": "^2.0.2",
-    "@radix-ui/react-menubar": "^1.0.4",
-    "@radix-ui/react-navigation-menu": "^1.1.4",
-    "@radix-ui/react-popover": "^1.0.7",
-    "@radix-ui/react-progress": "^1.0.3",
-    "@radix-ui/react-radio-group": "^1.1.3",
-    "@radix-ui/react-scroll-area": "^1.0.5",
-    "@radix-ui/react-select": "^2.0.0",
-    "@radix-ui/react-separator": "^1.0.3",
-    "@radix-ui/react-slider": "^1.1.2",
-    "@radix-ui/react-slot": "^1.0.2",
-    "@radix-ui/react-switch": "^1.0.3",
-    "@radix-ui/react-tabs": "^1.0.4",
-    "@radix-ui/react-toast": "^1.1.5",
-    "@radix-ui/react-toggle": "^1.0.3",
-    "@radix-ui/react-toggle-group": "^1.0.4",
-    "@radix-ui/react-tooltip": "^1.0.7",
-    "@supabase/supabase-js": "^2.39.7",
-    "@tanstack/react-query": "^5.24.1",
-    "@types/node": "^20.11.20",
-    "@types/react": "^18.2.58",
-    "@types/react-dom": "^18.2.19",
+    "@radix-ui/react-accordion": "^1.2.3",
+    "@radix-ui/react-alert-dialog": "^1.1.6",
+    "@radix-ui/react-aspect-ratio": "^1.1.2",
+    "@radix-ui/react-avatar": "^1.1.3",
+    "@radix-ui/react-checkbox": "^1.1.4",
+    "@radix-ui/react-collapsible": "^1.1.3",
+    "@radix-ui/react-context-menu": "^2.2.6",
+    "@radix-ui/react-dialog": "^1.1.6",
+    "@radix-ui/react-dropdown-menu": "^2.1.6",
+    "@radix-ui/react-hover-card": "^1.1.6",
+    "@radix-ui/react-label": "^2.1.2",
+    "@radix-ui/react-menubar": "^1.1.6",
+    "@radix-ui/react-navigation-menu": "^1.2.5",
+    "@radix-ui/react-popover": "^1.1.6",
+    "@radix-ui/react-progress": "^1.1.2",
+    "@radix-ui/react-radio-group": "^1.2.3",
+    "@radix-ui/react-scroll-area": "^1.2.3",
+    "@radix-ui/react-select": "^2.1.6",
+    "@radix-ui/react-separator": "^1.1.2",
+    "@radix-ui/react-slider": "^1.2.3",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@radix-ui/react-switch": "^1.1.3",
+    "@radix-ui/react-tabs": "^1.1.3",
+    "@radix-ui/react-toast": "^1.2.6",
+    "@radix-ui/react-toggle": "^1.1.2",
+    "@radix-ui/react-toggle-group": "^1.1.2",
+    "@radix-ui/react-tooltip": "^1.1.8",
+    "@supabase/supabase-js": "^2.49.1",
+    "@tanstack/react-query": "^5.67.2",
+    "@types/node": "^20.17.23",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
     "@types/uuid": "^9.0.8",
-    "autoprefixer": "^10.4.17",
+    "autoprefixer": "^10.4.20",
     "axios": "^1.8.2",
-    "class-variance-authority": "^0.7.0",
+    "buffer": "^6.0.3",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "cmdk": "^1.0.4",
-    "date-fns": "^3.3.1",
+    "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.5.2",
     "ethers": "^6.13.5",
-    "graphql": "^16.8.1",
+    "graphql": "^16.10.0", 
     "graphql-request": "^6.1.0",
     "input-otp": "^1.4.2",
     "jsonwebtoken": "^9.0.2",
@@ -7085,33 +9239,56 @@ File: package.json
     "next-themes": "^0.4.4",
     "openai": "^3.3.0",
     "pino-pretty": "^10.3.1",
-    "postcss": "^8.4.35",
+    "postcss": "^8.5.3",
+    "process": "^0.11.10",
     "react": "^18.2.0",
     "react-day-picker": "^9.5.1",
     "react-dom": "^18.2.0",
+    "react-hook-form": "^7.54.2",
     "react-resizable-panels": "^2.1.7",
-    "recharts": "^2.12.1",
+    "recharts": "^2.15.1",
     "solc": "^0.8.28",
     "sonner": "^2.0.1",
-    "tailwind-merge": "^2.2.1",
-    "tailwindcss": "^3.4.1",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3",
+    "typescript": "^5.8.2",
+    "url": "^0.11.4",
     "uuid": "^9.0.1",
     "vaul": "^1.1.2",
     "viem": "^2.23.7",
-    "wagmi": "^2.5.7",
-    "zod": "^3.22.4"
+    "wagmi": "^2.14.12",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@graphql-codegen/cli": "^5.0.2",
-    "@graphql-codegen/typescript": "^4.0.6",
-    "@graphql-codegen/typescript-operations": "^4.1.3",
-    "@types/jsonwebtoken": "^9.0.5"
+    "@graphql-codegen/cli": "^5.0.5",
+    "@graphql-codegen/typescript": "^4.1.5",
+    "@graphql-codegen/typescript-operations": "^4.5.1",
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@typechain/ethers-v6": "^0.5.0",
+    "@typechain/hardhat": "^9.0.0",
+    "@types/chai": "^4.3.5",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/mocha": "^10.0.1",
+    "browserify-zlib": "^0.2.0",
+    "chai": "^4.3.7",
+    "crypto-browserify": "^3.12.1",
+    "hardhat": "^2.19.1",
+    "hardhat-gas-reporter": "^1.0.8",
+    "https-browserify": "^1.0.0",
+    "os-browserify": "^0.3.0",
+    "path-browserify": "^1.0.1",
+    "solidity-coverage": "^0.8.0",
+    "stream-browserify": "^3.0.0",
+    "stream-http": "^3.2.0",
+    "typechain": "^8.3.0"
   }
 }
-
 
 ================================================================================
 File: supabase/migrations/20250125030838_broad_tree.sql

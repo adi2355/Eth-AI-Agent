@@ -13,6 +13,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+/**
+ * Custom JSON serializer that handles BigInt values
+ * @param key Property key
+ * @param value Property value
+ * @returns Serialized value
+ */
+function bigIntSerializer(key: string, value: any): any {
+  // Convert BigInt to string
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+  return value;
+}
+
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
@@ -71,22 +85,32 @@ export async function POST(req: Request) {
     console.log('Chat API: Pipeline complete. Analysis:', result.analysis.classification.primaryIntent);
     console.log('Chat API: Generated response:', result.response);
 
-    return NextResponse.json(
-      {
-        response: result.response,
-        data: result.aggregatorData,
-        analysis: result.analysis,
-        suggestions: result.suggestions,
-        contextAnalysis: result.contextAnalysis
-      },
-      { status: 200, headers: corsHeaders }
-    );
+    // Use the custom serializer to handle BigInt values
+    const responseData = {
+      response: result.response,
+      data: result.aggregatorData,
+      analysis: result.analysis,
+      suggestions: result.suggestions,
+      contextAnalysis: result.contextAnalysis
+    };
+
+    // Create a serialized version of the response data
+    const serializedData = JSON.stringify(responseData, bigIntSerializer);
+    
+    // Return the response with the serialized data
+    return new NextResponse(serializedData, { 
+      status: 200, 
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json'
+      }
+    });
   } catch (error) {
     console.error('Chat API error:', error);
-
+  
     let errorMessage = 'Failed to process chat request';
     let statusCode = 500;
-
+  
     if (error instanceof Error) {
       if (error.message.includes('API key')) {
         errorMessage = 'Service configuration error';
@@ -98,16 +122,27 @@ export async function POST(req: Request) {
         errorMessage = error.message;
         statusCode = 400;
       } else if (error.message.includes('Session ID is required')) {
-        errorMessage = 'Session ID is required for conversation memory';
+        errorMessage = 'Session ID is required';
         statusCode = 400;
       } else {
         errorMessage = error.message;
       }
     }
-
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: statusCode, headers: corsHeaders }
-    );
+  
+    // Use the custom serializer for error responses as well
+    const errorData = {
+      error: errorMessage,
+      status: statusCode
+    };
+  
+    const serializedError = JSON.stringify(errorData, bigIntSerializer);
+  
+    return new NextResponse(serializedError, {
+      status: statusCode,
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'application/json'
+      }
+    });
   }
 }

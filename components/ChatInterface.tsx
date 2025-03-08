@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { blockchainApi } from '@/lib/api/blockchain-api';
 import { ContractTemplateSelector } from './ContractTemplateSelector';
 import { TransactionForm } from './TransactionForm';
+import { WalletIntegrationService } from '@/lib/blockchain/wallet-integration';
 
 interface ErrorAlert {
   type: 'rate-limit' | 'api-error' | 'not-found' | 'network' | 'unknown';
@@ -216,7 +217,7 @@ export function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [sessionId, setSessionId] = useState<string>(uuidv4());
+  const [sessionId, setSessionId] = useState<string>('default-session');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showWelcome, setShowWelcome] = useState(true);
@@ -245,11 +246,13 @@ export function ChatInterface() {
   }, [messages]);
 
   useEffect(() => {
-    setSessionId(uuidv4());
+    setSessionId('default-session');
   }, []);
 
   useEffect(() => {
+    // Set the session ID in the blockchain API
     blockchainApi.setSessionId(sessionId);
+    console.log('ChatInterface: Set blockchain API session ID:', sessionId);
     
     setMessages([]);
     
@@ -362,7 +365,7 @@ export function ChatInterface() {
         },
         body: JSON.stringify({
           query: queryText,
-          sessionId
+          sessionId: sessionId
         }),
       });
 
@@ -419,10 +422,17 @@ export function ChatInterface() {
 
   const connectWallet = async () => {
     try {
-      blockchainApi.setSessionId(sessionId);
+      // Set the session ID to 'default-session' for consistency
+      console.log('ChatInterface: Connecting wallet with session ID:', sessionId);
       
+      // Connect the wallet through the blockchain API
       const address = await blockchainApi.connectWallet('metamask');
+      console.log('ChatInterface: Connected to wallet with address:', address);
       
+      // Set the wallet address in state
+      setWalletAddress(address);
+      
+      // Create success message
       const newMessage: Message = {
         role: 'assistant',
         content: `✅ Wallet connected successfully!\n\nAddress: \`${address.slice(0, 6)}...${address.slice(-4)}\`\n\nYou can now perform blockchain operations like deploying contracts and sending transactions.`,
@@ -578,6 +588,27 @@ export function ChatInterface() {
       }
     }
   }, [messages]);
+
+  // Add a useEffect to check wallet connection on mount
+  useEffect(() => {
+    const checkWalletConnection = async () => {
+      try {
+        // Check if the wallet is already connected in the session
+        const walletStatus = await blockchainApi.getWalletStatus();
+        console.log('ChatInterface: Checking existing wallet connection:', walletStatus);
+        
+        if (walletStatus && walletStatus.connected && walletStatus.address) {
+          // If wallet is already connected, update the state
+          console.log('ChatInterface: Found existing wallet connection:', walletStatus.address);
+          setWalletAddress(walletStatus.address);
+        }
+      } catch (error) {
+        console.error('ChatInterface: Error checking wallet connection:', error);
+      }
+    };
+    
+    checkWalletConnection();
+  }, []);
 
   return (
     <Card className="h-[calc(100vh-12rem)]">

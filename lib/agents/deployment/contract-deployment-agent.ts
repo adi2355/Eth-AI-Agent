@@ -2,8 +2,9 @@ import { parseAbi, encodeAbiParameters } from 'viem';
 import { walletService, TransactionOptions, WalletIntegrationService } from '../../blockchain/wallet-integration';
 import { publicClient } from '../../blockchain/providers';
 import { validateContract } from '../security/contract-validator';
-import { ContractTemplate, getTemplate } from './contract-templates';
+import { ContractTemplate, getAllTemplates } from './contract-templates';
 import { compile } from './solidity-compiler';
+import { transactionApi } from '../../api/transaction-api';
 
 export interface DeploymentParams {
   // Contract source or template information
@@ -30,6 +31,7 @@ export interface DeploymentResult {
   transactionHash: `0x${string}`;
   contractAddress: `0x${string}` | null;
   deploymentStatus: 'pending' | 'success' | 'failed';
+  templateId?: string;
   abi: any[];
   bytecode: `0x${string}`;
   constructorArgs: any[];
@@ -37,10 +39,42 @@ export interface DeploymentResult {
   effectiveGasPrice?: bigint;
   receipt?: any;
   error?: string;
+  timestamp: number;
+  confirmations?: number;
 }
 
 export class ContractDeploymentAgent {
   private deployments = new Map<string, DeploymentResult>();
+  
+  // Static deployments registry (shared across instances)
+  private static globalDeployments = new Map<string, DeploymentResult>();
+  
+  /**
+   * Get all deployments (static method)
+   * @returns Array of all deployments
+   */
+  static getAllDeployments(): DeploymentResult[] {
+    return Array.from(this.globalDeployments.values());
+  }
+  
+  /**
+   * Get a specific deployment (static method)
+   * @param hash Transaction hash
+   * @returns Deployment result or null if not found
+   */
+  static getDeployment(hash: `0x${string}`): DeploymentResult | null {
+    return this.globalDeployments.get(hash) || null;
+  }
+
+  /**
+   * Find a template by ID
+   * @param templateId Template ID
+   * @returns Template or undefined if not found
+   */
+  private async findTemplate(templateId: string): Promise<ContractTemplate | undefined> {
+    const templates = await getAllTemplates();
+    return templates.find((template: ContractTemplate) => template.id === templateId);
+  }
 
   // Generate contract from template or use provided source
   private async getContractSource(params: DeploymentParams): Promise<string> {
@@ -51,7 +85,7 @@ export class ContractDeploymentAgent {
     
     // If template ID is provided, get template and fill parameters
     if (params.templateId) {
-      const template = await getTemplate(params.templateId);
+      const template = await this.findTemplate(params.templateId);
       if (!template) {
         throw new Error(`Template with ID ${params.templateId} not found`);
       }
@@ -77,10 +111,39 @@ export class ContractDeploymentAgent {
     params: DeploymentParams
   ): Promise<DeploymentResult> {
     try {
-      // Check if wallet is connected
-      if (!walletServiceInstance.isConnected()) {
-        throw new Error('Wallet not connected');
+      console.log('ContractDeploymentAgent.deployContract called with:', {
+        walletServiceExists: !!walletServiceInstance,
+        templateId: params.templateId,
+        constructorArgs: params.constructorArgs,
+      });
+
+      // Validate wallet connection
+      if (!walletServiceInstance) {
+        throw new Error("Wallet service instance not provided");
       }
+      
+      // Get connected wallet address
+      const deployer = walletServiceInstance.getAddress();
+      
+      if (!deployer) {
+        throw new Error("Wallet not connected");
+      }
+      
+      console.log(`ContractDeploymentAgent: Using deployer address ${deployer}`);
+      
+      // Find template
+      const template = params.templateId ? await this.findTemplate(params.templateId) : undefined;
+      
+      if (params.templateId && !template) {
+        throw new Error(`Template with ID ${params.templateId} not found`);
+      }
+      
+      if (params.templateId) {
+        console.log(`ContractDeploymentAgent: Found template ${params.templateId}`);
+      }
+      
+      // Prepare constructor arguments
+      const constructorArgs = params.constructorArgs || [];
       
       // Get contract source
       const source = await this.getContractSource(params);
@@ -117,9 +180,6 @@ export class ContractDeploymentAgent {
         throw new Error(`Contract security check failed: ${securityCheck.issues.map(i => i.title).join(', ')}`);
       }
       
-      // Prepare constructor args
-      const constructorArgs = params.constructorArgs || [];
-      
       // Prepare transaction options
       const txOptions: any = {
         data: bytecode
@@ -149,13 +209,30 @@ export class ContractDeploymentAgent {
         transactionHash: txHash,
         contractAddress: null, // Will be updated after confirmation
         deploymentStatus: 'pending',
+        templateId: params.templateId,
         abi,
         bytecode,
-        constructorArgs
+        constructorArgs,
+        timestamp: Date.now()
       };
       
-      // Store the deployment
+      // Store in instance map
       this.deployments.set(txHash, deploymentResult);
+      
+      // Store in global registry
+      ContractDeploymentAgent.globalDeployments.set(txHash, deploymentResult);
+      
+      console.log(`ContractDeploymentAgent: Deployment registered in global registry: ${txHash}`);
+      
+      // Notify listeners about the new deployment
+      transactionApi.notifyTransactionAdded({
+        transactionHash: txHash,
+        status: 'pending',
+        timestamp: deploymentResult.timestamp,
+        type: 'deploy',
+        templateId: deploymentResult.templateId,
+        contractAddress: null
+      });
       
       // Wait for deployment confirmation in the background
       this.waitForDeployment(txHash, params.verify || false, walletServiceInstance);
@@ -174,34 +251,78 @@ export class ContractDeploymentAgent {
     walletServiceInstance: WalletIntegrationService
   ): Promise<void> {
     try {
+      console.log(`ContractDeploymentAgent: Waiting for confirmation of deployment ${hash}`);
+      
+      // Get current deployment
+      const deployment = this.deployments.get(hash);
+      if (!deployment) {
+        console.warn(`ContractDeploymentAgent: Deployment ${hash} not found in instance map`);
+        return;
+      }
+      
       // Wait for transaction receipt
       const receipt = await walletServiceInstance.waitForTransaction(hash);
       
-      // Update deployment result
-      const deployment = this.deployments.get(hash);
-      if (deployment) {
-        deployment.deploymentStatus = receipt.status === 'success' ? 'success' : 'failed';
-        deployment.contractAddress = receipt.contractAddress as `0x${string}` || null;
-        deployment.receipt = receipt;
-        deployment.gasUsed = receipt.gasUsed;
-        deployment.effectiveGasPrice = receipt.effectiveGasPrice;
-        
-        this.deployments.set(hash, deployment);
-      }
+      console.log(`ContractDeploymentAgent: Deployment ${hash} confirmed:`, receipt);
+      
+      // Extract contract address from receipt
+      const contractAddress = receipt.contractAddress as `0x${string}` | null;
+      
+      // Update deployment status
+      deployment.deploymentStatus = receipt.status === 'success' ? 'success' : 'failed';
+      deployment.contractAddress = contractAddress;
+      deployment.gasUsed = receipt.gasUsed;
+      deployment.effectiveGasPrice = receipt.effectiveGasPrice;
+      deployment.receipt = receipt;
+      
+      // Update both instance and global maps
+      this.deployments.set(hash, deployment);
+      ContractDeploymentAgent.globalDeployments.set(hash, deployment);
+      
+      console.log(`ContractDeploymentAgent: Updated global registry for deployment ${hash}`);
+      
+      // Notify listeners about the updated deployment
+      transactionApi.notifyTransactionUpdated({
+        transactionHash: hash,
+        status: deployment.deploymentStatus || 'pending',
+        timestamp: deployment.timestamp,
+        type: 'deploy',
+        error: deployment.error,
+        templateId: deployment.templateId,
+        contractAddress: deployment.contractAddress,
+        confirmations: deployment.confirmations
+      });
       
       // Verify contract if requested
       if (verify && deployment && deployment.contractAddress) {
         // TODO: Implement contract verification
       }
     } catch (error) {
-      console.error('Deployment confirmation error:', error);
+      console.error(`ContractDeploymentAgent: Error confirming deployment ${hash}:`, error);
       
-      // Update deployment status to failed
+      // Get current deployment
       const deployment = this.deployments.get(hash);
       if (deployment) {
+        // Mark as failed
         deployment.deploymentStatus = 'failed';
         deployment.error = `Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        
+        // Update both instance and global maps
         this.deployments.set(hash, deployment);
+        ContractDeploymentAgent.globalDeployments.set(hash, deployment);
+        
+        console.log(`ContractDeploymentAgent: Marked deployment ${hash} as failed in global registry`);
+        
+        // Notify listeners about the failed deployment
+        transactionApi.notifyTransactionUpdated({
+          transactionHash: hash,
+          status: 'failed',
+          timestamp: deployment.timestamp,
+          type: 'deploy',
+          error: deployment.error,
+          templateId: deployment.templateId,
+          contractAddress: null
+        });
       }
     }
   }

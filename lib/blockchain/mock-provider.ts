@@ -31,6 +31,10 @@ const mockTokens: Record<string, any> = {
  * Check if mocks are enabled
  */
 export function isMockEnabled(): boolean {
+  console.log('isMockEnabled check:', {
+    USE_MOCKS,
+    environment: typeof process !== 'undefined' ? process.env.NODE_ENV : 'client'
+  });
   return USE_MOCKS;
 }
 
@@ -82,10 +86,14 @@ export function mockGetAddress(): `0x${string}` {
  * Mock send transaction
  */
 export function mockSendTransaction(options: any): Promise<`0x${string}`> {
+  console.log('mockSendTransaction called with options:', options);
+  
   return new Promise((resolve) => {
     setTimeout(() => {
       // Generate mock transaction hash
       const txHash = `0x${Math.floor(Math.random() * 10**16).toString(16).padStart(64, '0')}` as `0x${string}`;
+      
+      console.log(`Generated mock transaction hash: ${txHash}`);
       
       // Record the transaction
       mockTransactions.set(txHash, {

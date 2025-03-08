@@ -37,7 +37,8 @@ export type BlockchainActionType =
   | 'GET_TOKEN_INFO'
   | 'GET_CONTRACT_TEMPLATES'
   | 'GET_DEPLOYMENT_STATUS'
-  | 'GET_TRANSFER_STATUS';
+  | 'GET_TRANSFER_STATUS'
+  | 'GET_WALLET_STATUS';
 
 // Blockchain action parameters
 export interface BlockchainActionParams {
@@ -91,6 +92,9 @@ export class BlockchainOrchestrator {
           
         case 'GET_TRANSFER_STATUS':
           return this.getTransferStatus(params.transactionHash!);
+          
+        case 'GET_WALLET_STATUS':
+          return this.getWalletStatus(sessionId);
           
         default:
           throw new Error(`Unknown action type: ${params.actionType}`);
@@ -180,12 +184,35 @@ export class BlockchainOrchestrator {
   // Transfer tokens
   async transferTokens(sessionId: string, params: TransferParams): Promise<BlockchainActionResult> {
     try {
+      // Log transaction attempt details
+      console.log(`BlockchainOrchestrator.transferTokens called for session: ${sessionId}`, {
+        params: {
+          to: params.to,
+          amount: params.amount,
+          tokenAddress: params.tokenAddress || 'ETH (native)',
+          chainId: params.chainId
+        }
+      });
+      
       // Get wallet service for the session
       const walletService = sessionManager.getWalletService(sessionId);
+      
+      // Log wallet service retrieval results
+      console.log('Wallet service retrieval result:', {
+        walletServiceExists: !!walletService,
+        sessionId
+      });
       
       if (!walletService) {
         throw new Error('Wallet not connected');
       }
+      
+      // Log wallet connection status
+      console.log('Wallet connection status:', {
+        isConnected: walletService.isConnected(),
+        address: walletService.getAddress(),
+        walletType: (walletService as any).walletType
+      });
       
       // Use the token transfer agent with the session's wallet
       const result = await tokenTransferAgent.transferTokens(walletService, params);
@@ -196,7 +223,13 @@ export class BlockchainOrchestrator {
         data: result
       };
     } catch (error) {
-      console.error('Token transfer error:', error);
+      // Enhanced error logging
+      console.error('Token transfer error in orchestrator:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace',
+        sessionId
+      });
+      
       return {
         success: false,
         actionType: 'TRANSFER_TOKENS',
@@ -295,6 +328,33 @@ export class BlockchainOrchestrator {
       return {
         success: false,
         actionType: 'GET_TRANSFER_STATUS',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Get wallet status
+  private getWalletStatus(sessionId: string): BlockchainActionResult {
+    try {
+      const walletService = sessionManager.getWalletService(sessionId);
+      
+      if (!walletService) {
+        throw new Error('Wallet not connected');
+      }
+      
+      return {
+        success: true,
+        actionType: 'GET_WALLET_STATUS',
+        data: {
+          isConnected: walletService.isConnected(),
+          address: walletService.getAddress(),
+          walletType: (walletService as any).walletType
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'GET_WALLET_STATUS',
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
