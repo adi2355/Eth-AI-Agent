@@ -6,6 +6,7 @@
 ![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D18-brightgreen)
 ![Next.js](https://img.shields.io/badge/Next.js-latest-black)
 
+
 **An AI-powered conversational interface for blockchain interactions**
 
 </div>
