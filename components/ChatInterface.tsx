@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, Loader2, RefreshCcw, ChevronDown, AlertCircle, Info } from 'lucide-react';
+import { Bot, Send, Loader2, RefreshCcw, ChevronDown, AlertCircle, Info, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { v4 as uuidv4 } from 'uuid';
+import { blockchainApi } from '@/lib/api/blockchain-api';
+import { ContractTemplateSelector } from './ContractTemplateSelector';
+import { TransactionForm } from './TransactionForm';
 
 interface ErrorAlert {
   type: 'rate-limit' | 'api-error' | 'not-found' | 'network' | 'unknown';
@@ -65,6 +68,8 @@ const MessageComponent = ({
 }) => {
   const isError = message.error !== undefined;
   const hasApiSource = message.data?.source === 'coingecko' || message.data?.source === 'coinmarketcap';
+  const hasTxData = message.data?.transactionHash;
+  const txStatus = message.data?.status || 'pending';
 
   const messageClasses = [
     "max-w-[80%] rounded-lg px-4 py-2",
@@ -94,6 +99,25 @@ const MessageComponent = ({
           <div className="flex items-center gap-1 text-xs opacity-70 mt-1">
             <Info className="h-3 w-3" />
             <span>Data source: {message.data.source}</span>
+          </div>
+        )}
+
+        {hasTxData && (
+          <div className="mt-2 text-xs border-t pt-2">
+            <div className="flex items-center gap-2">
+              <span className={
+                txStatus === 'success' ? 'text-green-500' :
+                txStatus === 'failed' ? 'text-red-500' :
+                'text-yellow-500'
+              }>
+                {txStatus === 'success' ? '✓' :
+                 txStatus === 'failed' ? '✗' : '⟳'}
+              </span>
+              <span className="font-mono">{message.data.transactionHash.slice(0, 6)}...{message.data.transactionHash.slice(-4)}</span>
+              {txStatus === 'pending' && (
+                <Loader2 className="h-3 w-3 animate-spin ml-2" />
+              )}
+            </div>
           </div>
         )}
 
@@ -172,6 +196,21 @@ const QUICK_QUERIES = [
   },
 ];
 
+const BLOCKCHAIN_ACTIONS = [
+  {
+    label: 'Deploy ERC20 Token',
+    query: 'I want to deploy an ERC20 token called MyToken with symbol MTK',
+  },
+  {
+    label: 'Send ETH',
+    query: 'I want to send 0.01 ETH',
+  },
+  {
+    label: 'Connect Wallet',
+    query: 'Connect my wallet',
+  },
+];
+
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -179,6 +218,20 @@ export function ChatInterface() {
   const [retryCount, setRetryCount] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [transactions, setTransactions] = useState<{
+    hash: string;
+    status: 'pending' | 'success' | 'failed';
+    type: 'transfer' | 'deploy';
+  }[]>([]);
+  const [pendingTransaction, setPendingTransaction] = useState<{
+    type: 'transfer' | 'deploy';
+    params: any;
+  } | null>(null);
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [showTransactionForm, setShowTransactionForm] = useState(false);
+  const [transactionFormValues, setTransactionFormValues] = useState({});
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -189,13 +242,11 @@ export function ChatInterface() {
   }, [messages]);
 
   useEffect(() => {
-    // Initialize session with UUID
     setSessionId(uuidv4());
   }, []);
 
   const handleError = (error: unknown): ErrorAlert => {
     if (error instanceof Error) {
-      // Rate limit errors
       if (error.message.includes('rate limit')) {
         return {
           type: 'rate-limit',
@@ -205,7 +256,6 @@ export function ChatInterface() {
         };
       }
       
-      // API configuration errors
       if (error.message.includes('API key')) {
         return {
           type: 'api-error',
@@ -215,7 +265,6 @@ export function ChatInterface() {
         };
       }
 
-      // Not found errors
       if (error.message.includes('not found') || error.message.includes('No data available')) {
         return {
           type: 'not-found',
@@ -225,7 +274,6 @@ export function ChatInterface() {
         };
       }
 
-      // Network errors
       if (error.message.includes('network') || error.message.includes('ECONNRESET')) {
         return {
           type: 'network',
@@ -337,20 +385,293 @@ export function ChatInterface() {
     handleSubmit(suggestion);
   };
 
+  const connectWallet = async () => {
+    try {
+      setIsConnecting(true);
+      const address = await blockchainApi.connectWallet('metamask');
+      setWalletAddress(address);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `✅ Wallet connected: ${address.slice(0, 6)}...${address.slice(-4)}`,
+        timestamp: new Date()
+      }]);
+    } catch (error) {
+      console.error('Wallet connection error:', error);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+        error: {
+          type: 'api-error',
+          message: 'Wallet connection failed',
+          retryable: true
+        }
+      }]);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const checkTransactionStatus = async (hash: string, type: 'transfer' | 'deploy') => {
+    try {
+      if (type === 'transfer') {
+        const result = await blockchainApi.getTransferStatus(hash);
+        return {
+          hash,
+          status: result.status as 'pending' | 'success' | 'failed',
+          type
+        };
+      } else {
+        const result = await blockchainApi.getDeploymentStatus(hash);
+        return {
+          hash,
+          status: result.deploymentStatus as 'pending' | 'success' | 'failed',
+          type
+        };
+      }
+    } catch (error) {
+      console.error('Error checking transaction status:', error);
+      return {
+        hash,
+        status: 'failed' as const,
+        type
+      };
+    }
+  };
+
+  useEffect(() => {
+    const txMessages = messages.filter(msg => msg.data?.transactionHash);
+    const newTxs = txMessages.map(msg => ({
+      hash: msg.data.transactionHash as string,
+      status: 'pending' as const,
+      type: msg.content.includes('Contract') ? 'deploy' as const : 'transfer' as const
+    })).filter(tx => !transactions.some(t => t.hash === tx.hash));
+    
+    if (newTxs.length > 0) {
+      setTransactions(prev => [...prev, ...newTxs]);
+    }
+    
+    const interval = setInterval(async () => {
+      const pending = transactions.filter(tx => tx.status === 'pending');
+      if (pending.length === 0) {
+        clearInterval(interval);
+        return;
+      }
+      
+      const updates = await Promise.all(
+        pending.map(tx => checkTransactionStatus(tx.hash, tx.type))
+      );
+      
+      setTransactions(prev => 
+        prev.map(tx => {
+          const update = updates.find(u => u.hash === tx.hash);
+          return update || tx;
+        })
+      );
+      
+      updates
+        .filter(u => u.status !== 'pending')
+        .forEach(tx => {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: tx.status === 'success'
+              ? `${tx.type === 'deploy' ? 'Contract deployment' : 'Transaction'} successful! Hash: ${tx.hash}`
+              : `${tx.type === 'deploy' ? 'Contract deployment' : 'Transaction'} failed. Hash: ${tx.hash}`,
+            timestamp: new Date(),
+            data: { transactionHash: tx.hash, status: tx.status }
+          }]);
+        });
+        
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [messages, transactions]);
+
+  useEffect(() => {
+    const lastAssistantMsg = messages
+      .filter(msg => msg.role === 'assistant')
+      .pop();
+      
+    if (lastAssistantMsg?.data?.blockchain?.actionType === 'TRANSFER_TOKENS') {
+      setPendingTransaction({
+        type: 'transfer',
+        params: lastAssistantMsg.data.blockchain.data
+      });
+    } else if (lastAssistantMsg?.data?.blockchain?.actionType === 'DEPLOY_CONTRACT') {
+      setPendingTransaction({
+        type: 'deploy',
+        params: lastAssistantMsg.data.blockchain.data
+      });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const lastUserMsg = messages
+      .filter(msg => msg.role === 'user')
+      .pop();
+      
+    if (lastUserMsg) {
+      const content = lastUserMsg.content.toLowerCase();
+      
+      if (content.includes('deploy') && 
+          content.includes('contract') && 
+          !content.includes('erc20') &&
+          !content.includes('erc721') &&
+          !content.includes('erc1155')) {
+        setShowTemplateSelector(true);
+      }
+      
+      if ((content.includes('send') || 
+           content.includes('transfer')) &&
+          !content.match(/0x[a-fA-F0-9]{40}/)) {
+        
+        setShowTransactionForm(true);
+        
+        const amount = content.match(/\d+(\.\d+)?/)?.[0];
+        if (amount) {
+          setTransactionFormValues({ amount });
+        }
+      }
+    }
+  }, [messages]);
+
   return (
     <Card className="h-[calc(100vh-12rem)]">
       <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Bot className="h-5 w-5" />
-          Blockchain Assistant
+        <CardTitle className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bot className="h-5 w-5" />
+            Blockchain Assistant
+          </div>
+          <div className="flex items-center gap-2">
+            {walletAddress ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-1 px-3 bg-muted rounded-full">
+                <Wallet className="h-3 w-3" />
+                {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+              </div>
+            ) : (
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={connectWallet} 
+                disabled={isConnecting}
+              >
+                <Wallet className="h-4 w-4 mr-2" />
+                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col h-[calc(100%-5rem)]">
+        {pendingTransaction && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-background p-6 rounded-lg max-w-md w-full">
+              <h3 className="text-lg font-medium mb-4">
+                Confirm {pendingTransaction.type === 'transfer' ? 'Transaction' : 'Contract Deployment'}
+              </h3>
+              
+              {pendingTransaction.type === 'transfer' && (
+                <div className="space-y-2 mb-4">
+                  <p><span className="font-medium">Send:</span> {pendingTransaction.params.amount} {pendingTransaction.params.tokenAddress ? 'tokens' : 'ETH'}</p>
+                  <p><span className="font-medium">To:</span> {pendingTransaction.params.to}</p>
+                  {pendingTransaction.params.tokenAddress && (
+                    <p><span className="font-medium">Token:</span> {pendingTransaction.params.tokenAddress}</p>
+                  )}
+                </div>
+              )}
+              
+              {pendingTransaction.type === 'deploy' && (
+                <div className="space-y-2 mb-4">
+                  <p><span className="font-medium">Contract:</span> {pendingTransaction.params.templateId}</p>
+                  <p><span className="font-medium">Name:</span> {pendingTransaction.params.templateParams?.name}</p>
+                  <p><span className="font-medium">Symbol:</span> {pendingTransaction.params.templateParams?.symbol}</p>
+                </div>
+              )}
+              
+              <div className="flex gap-2 justify-end">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setPendingTransaction(null)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={async () => {
+                    try {
+                      let result;
+                      if (pendingTransaction.type === 'transfer') {
+                        result = await blockchainApi.transferTokens(
+                          pendingTransaction.params.to,
+                          pendingTransaction.params.amount,
+                          pendingTransaction.params.tokenAddress
+                        );
+                      } else {
+                        result = await blockchainApi.deployContract(
+                          pendingTransaction.params.templateId,
+                          pendingTransaction.params.templateParams
+                        );
+                      }
+                      
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: pendingTransaction.type === 'transfer' 
+                          ? `Transaction sent with hash: ${result.transactionHash}` 
+                          : `Contract deployment initiated with hash: ${result.transactionHash}`,
+                        timestamp: new Date(),
+                        data: { transactionHash: result.transactionHash }
+                      }]);
+                    } catch (error) {
+                      console.error('Transaction error:', error);
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                        timestamp: new Date(),
+                        error: {
+                          type: 'api-error',
+                          message: 'Transaction failed',
+                          retryable: true
+                        }
+                      }]);
+                    } finally {
+                      setPendingTransaction(null);
+                    }
+                  }}
+                >
+                  Confirm
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showTemplateSelector && (
+          <ContractTemplateSelector
+            onSelect={(templateId) => {
+              handleSubmit(`I want to deploy a ${templateId} contract`);
+              setShowTemplateSelector(false);
+            }}
+            onCancel={() => setShowTemplateSelector(false)}
+          />
+        )}
+
+        {showTransactionForm && (
+          <TransactionForm
+            initialValues={transactionFormValues}
+            onSubmit={(data) => {
+              const query = `I want to send ${data.amount} ${data.tokenAddress ? 'tokens' : 'ETH'} to ${data.to}${data.tokenAddress ? ' using token ' + data.tokenAddress : ''}`;
+              handleSubmit(query);
+              setShowTransactionForm(false);
+            }}
+            onCancel={() => setShowTransactionForm(false)}
+          />
+        )}
+
         <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-4">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground p-4">
-              <p>👋 Hi! I can help you explore blockchain data.</p>
-              <p className="mt-2">Try asking about token prices or market trends.</p>
+              <p>👋 Hi! I can help you explore blockchain data and perform transactions.</p>
+              <p className="mt-2">Try asking about token prices or connecting your wallet to make transactions.</p>
             </div>
           )}
           {messages.map((message, index) => (
@@ -395,10 +716,32 @@ export function ChatInterface() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Wallet className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {BLOCKCHAIN_ACTIONS.map((item, index) => (
+                  <DropdownMenuItem
+                    key={index}
+                    onClick={() => walletAddress || item.label === 'Connect Wallet' ? 
+                                   handleSubmit(item.query) : 
+                                   connectWallet()}
+                    disabled={!walletAddress && item.label !== 'Connect Wallet'}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about token prices or trends (e.g., 'What is Bitcoin's price?')"
+              placeholder="Ask about tokens or blockchain operations..."
               disabled={isLoading}
               className="flex-1"
             />

@@ -1,4 +1,4 @@
-import { blockchainOrchestrator, BlockchainActionParams, BlockchainActionResult } from '../agents/blockchain-orchestrator';
+import { BlockchainActionParams, BlockchainActionResult } from '../agents/blockchain-orchestrator';
 import { TokenInfo } from '../blockchain/token-registry';
 import { DeploymentResult, DeploymentParams } from '../agents/deployment/contract-deployment-agent';
 import { TransferResult, TransferParams } from '../agents/transaction/token-transfer-agent';
@@ -9,9 +9,29 @@ import { WalletConnectionOptions } from '../blockchain/wallet-integration';
  * Blockchain API Service
  * 
  * This service provides a simplified interface for frontend applications
- * to interact with blockchain functionality.
+ * to interact with blockchain functionality via server-side API.
  */
 export class BlockchainApiService {
+  /**
+   * Execute a blockchain action via the server API
+   */
+  private async executeBlockchainAction(action: BlockchainActionParams): Promise<BlockchainActionResult> {
+    const response = await fetch('/api/blockchain', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: `Server error: ${response.status}` }));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
   /**
    * Connect to wallet
    * @param provider - Wallet provider (metamask, walletconnect, etc.)
@@ -22,7 +42,7 @@ export class BlockchainApiService {
       type: provider as any // Cast to any as a temporary solution
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'CONNECT_WALLET',
       walletParams
     });
@@ -37,8 +57,8 @@ export class BlockchainApiService {
   /**
    * Disconnect wallet
    */
-  disconnectWallet(): void {
-    blockchainOrchestrator.handleAction({
+  async disconnectWallet(): Promise<void> {
+    await this.executeBlockchainAction({
       actionType: 'DISCONNECT_WALLET'
     });
   }
@@ -69,7 +89,7 @@ export class BlockchainApiService {
       maxPriorityFeePerGas: options.maxPriorityFeePerGas
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'DEPLOY_CONTRACT',
       deploymentParams
     });
@@ -109,7 +129,7 @@ export class BlockchainApiService {
       maxPriorityFeePerGas: options.maxPriorityFeePerGas
     };
     
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'TRANSFER_TOKENS',
       transferParams
     });
@@ -128,7 +148,7 @@ export class BlockchainApiService {
    * @returns Token information
    */
   async getTokenInfo(tokenAddress: string, chainId: number): Promise<TokenInfo> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_TOKEN_INFO',
       tokenAddress: tokenAddress as `0x${string}`,
       chainId
@@ -147,7 +167,7 @@ export class BlockchainApiService {
    * @returns List of contract templates
    */
   async getContractTemplates(category?: string): Promise<ContractTemplate[]> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_CONTRACT_TEMPLATES',
       templateCategory: category
     });
@@ -165,7 +185,7 @@ export class BlockchainApiService {
    * @returns Deployment status
    */
   async getDeploymentStatus(transactionHash: string): Promise<DeploymentResult> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_DEPLOYMENT_STATUS',
       transactionHash: transactionHash as `0x${string}`
     });
@@ -183,7 +203,7 @@ export class BlockchainApiService {
    * @returns Transfer status
    */
   async getTransferStatus(transactionHash: string): Promise<TransferResult> {
-    const result = await blockchainOrchestrator.handleAction({
+    const result = await this.executeBlockchainAction({
       actionType: 'GET_TRANSFER_STATUS',
       transactionHash: transactionHash as `0x${string}`
     });
@@ -201,7 +221,7 @@ export class BlockchainApiService {
    * @returns Action result
    */
   async executeAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
-    return blockchainOrchestrator.handleAction(params);
+    return this.executeBlockchainAction(params);
   }
 }
 

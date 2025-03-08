@@ -130,6 +130,23 @@ CONTEXT TYPES AND HANDLING:
    - Reference audits and incidents
    - Include best practices
 
+7. Blockchain Operations (DEPLOY_CONTRACT, TRANSFER_TOKENS, CONNECT_WALLET):
+   - Wallet Connection:
+     - Confirm successful wallet connection
+     - Show abbreviated wallet address
+     - Emphasize transaction capabilities now enabled
+   - Token Transfers:
+     - Confirm transaction submission
+     - Display transaction hash (abbreviated)
+     - Explain next steps (confirmation, block time)
+     - Provide transaction explorer link if available
+   - Contract Deployment:
+     - Confirm deployment transaction submission
+     - Display transaction hash
+     - Explain deployment process
+     - Note contract address will be available after confirmation
+     - Explain verification options if applicable
+
 RESPONSE STRUCTURE:
 
 1. Market Data Format:
@@ -158,6 +175,13 @@ RESPONSE STRUCTURE:
    - Standards: Reference specifications
    - Security: Note important considerations
    - Resources: Link to documentation
+
+5. Blockchain Transaction Format:
+   - Status: Confirmed/Pending/Failed
+   - Transaction Hash: Abbreviated (first 6, last 4 chars)
+   - Details: Amount, recipient (abbreviated), token
+   - Confirmations: Number needed and estimated time
+   - Action Items: Verification steps, explorer links
 
 CRITICAL REQUIREMENTS:
 
@@ -229,6 +253,31 @@ export async function generateSummary(input: SummarizationInput): Promise<string
       
       if (tokenData) {
         return generateTokenPriceResponse(tokenName, tokenData);
+      }
+    }
+
+    // Handle blockchain-specific responses
+    if (aggregatorResult?.primary?.blockchain) {
+      const blockchainData = aggregatorResult.primary.blockchain;
+      
+      if (blockchainData.actionType === 'CONNECT_WALLET' && blockchainData.success) {
+        return `✅ **Wallet connected successfully!**\n\nAddress: \`${blockchainData.data.address.slice(0, 6)}...${blockchainData.data.address.slice(-4)}\`\n\nYou can now perform blockchain operations like deploying contracts and sending transactions.`;
+      }
+      
+      if (blockchainData.actionType === 'DEPLOY_CONTRACT') {
+        if (blockchainData.success) {
+          return `🚀 **Contract deployment initiated!**\n\nTransaction hash: \`${blockchainData.data.transactionHash.slice(0, 6)}...${blockchainData.data.transactionHash.slice(-4)}\`\n\nYour contract is being deployed to the blockchain. This typically takes 15-60 seconds to confirm. Once confirmed, your contract address will be provided.`;
+        } else {
+          return `❌ **Contract deployment failed**\n\nError: ${blockchainData.error}\n\nPlease check your parameters and try again.`;
+        }
+      }
+      
+      if (blockchainData.actionType === 'TRANSFER_TOKENS') {
+        if (blockchainData.success) {
+          return `💸 **Transaction sent!**\n\nTransaction hash: \`${blockchainData.data.transactionHash.slice(0, 6)}...${blockchainData.data.transactionHash.slice(-4)}\`\n\nYour ${blockchainData.data.tokenAddress ? 'token transfer' : 'ETH transfer'} is being processed. This typically takes 15-60 seconds to confirm.`;
+        } else {
+          return `❌ **Transaction failed**\n\nError: ${blockchainData.error}\n\nPlease check your parameters and try again.`;
+        }
       }
     }
 

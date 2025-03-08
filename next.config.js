@@ -1,7 +1,11 @@
 /** @type {import('next').NextConfig} */
-const config = {
+const nextConfig = {
+  reactStrictMode: true,
   eslint: {
     ignoreDuringBuilds: true,
+  },
+  experimental: {
+    serverComponentsExternalPackages: ['solc'],
   },
   images: { unoptimized: true },
   async headers() {
@@ -17,6 +21,25 @@ const config = {
       },
     ];
   },
+  webpack: (config, { isServer }) => {
+    // If client-side (browser), provide empty implementations for Node.js modules
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+        stream: false,
+        path: false,
+        os: false,
+        http: false,
+        https: false,
+        zlib: false,
+      };
+    }
+    return config;
+  },
 };
 
-export default config;
+export default nextConfig;

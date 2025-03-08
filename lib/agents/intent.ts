@@ -88,6 +88,22 @@ CLASSIFICATION CATEGORIES:
     - Context-dependent questions
     Example: "Is it better?", "What's the difference?"
 
+11. DEPLOY_CONTRACT
+    - Requests to deploy smart contracts
+    - Specific contract template mentions
+    - Contract deployment parameters
+    Examples: "Deploy an ERC20 token", "Create a new token called MyToken"
+
+12. TRANSFER_TOKENS
+    - Requests to send tokens or ETH
+    - Mentions of specific recipients and amounts
+    Examples: "Send 0.1 ETH to 0x123...", "Transfer 100 USDC to my friend"
+
+13. CONNECT_WALLET
+    - Requests to connect a wallet
+    - MetaMask or wallet connection mentions
+    Examples: "Connect my wallet", "Link MetaMask"
+
 DETECTION RULES:
 
 1. Token Detection:
@@ -122,6 +138,13 @@ DETECTION RULES:
    - Trend analysis periods
    - Future predictions
 
+6. Blockchain Transaction Detection:
+   - Wallet addresses (0x...)
+   - Token amounts and symbols
+   - Contract template names (ERC20, ERC721)
+   - Transaction verbs (send, transfer, deploy, create)
+   - Wallet connection terms (connect, link, integrate)
+
 CRITICAL RESPONSE REQUIREMENTS:
 
 Return a valid JSON response with EXACTLY this structure:
@@ -130,7 +153,8 @@ Return a valid JSON response with EXACTLY this structure:
   "classification": {
     "primaryIntent": "MARKET_DATA" | "COMPARISON" | "TECHNICAL" | "DEFI" | 
                     "REGULATORY" | "NEWS_EVENTS" | "SECURITY" | "CONCEPTUAL" | 
-                    "HYBRID" | "NEEDS_CONTEXT",
+                    "HYBRID" | "NEEDS_CONTEXT" | "DEPLOY_CONTRACT" | 
+                    "TRANSFER_TOKENS" | "CONNECT_WALLET",
     "confidence": <number between 0 and 1>,
     "needsApiCall": <boolean>,
     "ambiguityLevel": "LOW" | "MEDIUM" | "HIGH",
@@ -153,7 +177,16 @@ Return a valid JSON response with EXACTLY this structure:
       "needed": <boolean>,
       "reason": <string | null>,
       "suggestedQueries": <string[]>
-    }
+    },
+    "detectedEntities": <string[]>,
+    "entityParams": {
+      "name": <string | null>,
+      "symbol": <string | null>,
+      "initialSupply": <string | null>
+    },
+    "recipient": <string | null>,
+    "amount": <string | null>,
+    "tokenAddress": <string | null>
   },
   "dataRequirements": {
     "marketData": {
@@ -194,7 +227,12 @@ CRITICAL REQUIREMENTS:
 12. For conceptual/technical queries:
     - Set marketData.needed = false
     - Set marketData.tokenCount = 0
-    - Include relevant aspects in conceptualData`;
+    - Include relevant aspects in conceptualData
+13. For blockchain transactions:
+    - For DEPLOY_CONTRACT: Extract templateId, name, symbol, initialSupply, etc.
+    - For TRANSFER_TOKENS: Extract to (recipient address), amount, tokenAddress (if specified)
+    - For CONNECT_WALLET: Extract wallet type (metamask, walletconnect)
+    - Include detectedEntities, entityParams, recipient, amount, tokenAddress as appropriate`;
 
 function preprocessQuery(query: string): PreprocessingStep[] {
   const steps: PreprocessingStep[] = [];

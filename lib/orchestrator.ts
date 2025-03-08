@@ -9,6 +9,7 @@ import {
 } from './agents';
 import { ConversationStore, ChatMessage } from './conversation-store';
 import { buildEnhancedContext, formatContextForPrompt, analyzeContextContinuity } from './conversation/context-builder';
+import { blockchainOrchestrator, BlockchainActionParams, BlockchainActionType } from './agents/blockchain-orchestrator';
 
 export class AgentOrchestrator {
   constructor() {
@@ -160,7 +161,26 @@ export class AgentOrchestrator {
 
       // Step 3: Process based on intent and context with retry
       try {
-        if (analysis.classification.needsApiCall || analysis.classification.requiresWebSearch) {
+        // Check for blockchain intents
+        if (analysis.classification.primaryIntent === 'DEPLOY_CONTRACT' || 
+            analysis.classification.primaryIntent === 'TRANSFER_TOKENS' ||
+            analysis.classification.primaryIntent === 'CONNECT_WALLET') {
+          
+          // Extract blockchain action parameters
+          const blockchainParams = this.extractBlockchainParams(analysis, query);
+          
+          // Execute blockchain action
+          const blockchainResult = await blockchainOrchestrator.handleAction(blockchainParams);
+          
+          // Include the blockchain result in the aggregatorData
+          aggregatorData = {
+            primary: {
+              blockchain: blockchainResult
+            }
+          };
+        } 
+        // Continue with standard processing for non-blockchain intents
+        else if (analysis.classification.needsApiCall || analysis.classification.requiresWebSearch) {
           console.log('Building aggregator spec...');
           const aggregatorSpec = await buildAggregatorCalls(analysis);
           
@@ -327,5 +347,45 @@ export class AgentOrchestrator {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled;
+  }
+
+  // Add helper method to extract parameters
+  private extractBlockchainParams(analysis: RobustAnalysis, query: string): BlockchainActionParams {
+    let actionParams: BlockchainActionParams = {
+      actionType: analysis.classification.primaryIntent as BlockchainActionType
+    };
+    
+    // Extract parameters based on intent
+    switch(analysis.classification.primaryIntent) {
+      case 'DEPLOY_CONTRACT':
+        // Extract template name, params
+        actionParams.deploymentParams = {
+          templateId: analysis.queryAnalysis.detectedEntities?.[0] || 'ERC20',
+          templateParams: {
+            name: analysis.queryAnalysis.entityParams?.name || 'MyToken',
+            symbol: analysis.queryAnalysis.entityParams?.symbol || 'MTK'
+            // Other parameters
+          }
+        };
+        break;
+        
+      case 'TRANSFER_TOKENS':
+        // Extract recipient, amount, token
+        actionParams.transferParams = {
+          to: analysis.queryAnalysis.recipient as `0x${string}` || '0x0000000000000000000000000000000000000000',
+          amount: analysis.queryAnalysis.amount || '0.1',
+          tokenAddress: analysis.queryAnalysis.tokenAddress as `0x${string}` || null,
+          chainId: 1 // Default to Ethereum mainnet
+        };
+        break;
+        
+      case 'CONNECT_WALLET':
+        actionParams.walletParams = {
+          type: 'metamask'
+        };
+        break;
+    }
+    
+    return actionParams;
   }
 }

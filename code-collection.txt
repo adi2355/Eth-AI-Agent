@@ -269,6 +269,154 @@ const handler = withAuth(
 export { handler as GET };
 
 ================================================================================
+File: collectcode.js
+================================================================================
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const DEFAULT_CONFIG = {
+  extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.sql'],
+  excludeDirs: [
+    'node_modules',
+    '.git',
+    'dist',
+    '.next',
+    'coverage',
+    'tests',
+    'scripts',
+    'components/ui',
+  ],
+  excludeFiles: [
+    '.test.',
+    '.spec.',
+    '.d.ts',
+    '.map',
+    'next-env.d.ts',
+    '.gitignore',
+    '.eslintrc.json',
+    '.env.example',
+    'components.json',
+    'package-lock.json',
+  ],
+  excludePaths: [
+    'lib/supabase.ts',
+    'lib/rate-limit.ts',
+    'lib/monitoring.ts',
+    'lib/cache.ts',
+    'lib/auth.ts',
+    'scripts/test-agent1.ts',
+    'scripts/test-agent2.ts',
+    'scripts/test-agent3.ts',
+    'scripts/test-orchestrator.ts',
+    'lib/graphql/queries.ts',
+    'lib/graphql/client.ts',
+    'hooks/use-toast.ts',
+    'components/WalletConnect.tsx',
+    'components/Learn.tsx',
+    'components/ContractInteraction.tsx',
+    'components/Analytics.tsx',
+    'app/providers.tsx',
+    'app/page.tsx',
+    'app/globals.css',
+    'app/layout.tsx',
+  ],
+  maxFileSize: 1024 * 1024, // 1MB
+};
+
+function getRelativePath(fullPath, rootDir) {
+  return path.relative(rootDir, fullPath);
+}
+
+function shouldExcludeFile(filePath, config) {
+  const normalizedPath = path.normalize(filePath);
+
+  if (config.excludeFiles.some((pattern) => normalizedPath.includes(pattern))) {
+    return true;
+  }
+
+  if (config.excludePaths.some((excludePath) =>
+    normalizedPath.includes(path.normalize(excludePath))
+  )) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldExcludeDir(dirPath, config) {
+  const normalizedPath = path.normalize(dirPath);
+  return config.excludeDirs.some((excludeDir) =>
+    normalizedPath.includes(path.normalize(excludeDir))
+  );
+}
+
+function collectFiles(dir, rootDir, config) {
+  let results = [];
+  const items = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const item of items) {
+    const fullPath = path.join(dir, item.name);
+    const relativePath = getRelativePath(fullPath, rootDir);
+
+    if (item.isDirectory()) {
+      if (!shouldExcludeDir(fullPath, config)) {
+        results = results.concat(collectFiles(fullPath, rootDir, config));
+      }
+    } else {
+      const ext = path.extname(item.name).toLowerCase();
+
+      if (config.extensions.includes(ext) && !shouldExcludeFile(relativePath, config)) {
+        const stats = fs.statSync(fullPath);
+        if (stats.size <= config.maxFileSize) {
+          results.push({ path: fullPath, relativePath });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+function collectCode(outputFile, customConfig = {}) {
+  const config = { ...DEFAULT_CONFIG, ...customConfig };
+
+  try {
+    fs.writeFileSync(outputFile, '');
+
+    const rootDir = process.cwd();
+    console.log(`Processing project directory: ${rootDir}`);
+    const files = collectFiles(rootDir, rootDir, config);
+
+    files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+    files.forEach(({ path: filePath, relativePath }) => {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const separator = '='.repeat(80);
+      fs.appendFileSync(
+        outputFile,
+        `\n\n${separator}\nFile: ${relativePath}\n${separator}\n\n${content}`
+      );
+    });
+
+    console.log('Collection complete!');
+  } catch (error) {
+    console.error('Error during collection:', error);
+    process.exit(1);
+  }
+}
+
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  const outputFile = process.argv[2] || 'code-collection.txt';
+  collectCode(outputFile);
+}
+
+export { collectCode };
+
+================================================================================
 File: components/ChatInterface.tsx
 ================================================================================
 
@@ -337,7 +485,7 @@ const MessageComponent = ({
   onRetry: () => void;
   onSuggestionClick: (suggestion: string) => void;
 }) => {
-  const isError = message.error || message.type === 'error';
+  const isError = message.error !== undefined;
   const hasApiSource = message.data?.source === 'coingecko' || message.data?.source === 'coinmarketcap';
 
   const messageClasses = [
@@ -524,7 +672,9 @@ export function ChatInterface() {
   };
 
   const handleSubmit = async (e: React.FormEvent | string, isRetry = false) => {
-    e?.preventDefault?.();
+    if (typeof e !== 'string' && e?.preventDefault) {
+      e.preventDefault();
+    }
     const queryText = typeof e === 'string' ? e : input;
     
     if (!queryText.trim() || !sessionId || isLoading) return;
@@ -780,6 +930,19 @@ export class ErrorBoundary extends React.Component<Props, State> {
 }
 
 ================================================================================
+File: jsconfig.json
+================================================================================
+
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  }
+} 
+
+================================================================================
 File: lib/agents/aggregator.ts
 ================================================================================
 
@@ -859,32 +1022,77 @@ export async function executeAggregatorCalls(spec: AggregatorSpec) {
   };
 
   try {
+    // Validate spec
+    if (!spec || typeof spec !== 'object') {
+      throw new Error('Invalid aggregator specification');
+    }
+
     // Handle CoinGecko data requests
     if (spec.primary.coingecko) {
       const { tokens } = spec.primary.coingecko;
       
-      // Get token details for each token
-      const tokenDetails = await Promise.all(
-        tokens.map(token => getTokenDetails(token))
-      );
+      // Validate tokens array
+      if (!Array.isArray(tokens)) {
+        throw new Error('Invalid tokens specification');
+      }
+
+      if (tokens.length === 0) {
+        throw new Error('No tokens specified for price lookup');
+      }
+
+      if (tokens.length > 5) {
+        throw new Error('Too many tokens requested (maximum 5)');
+      }
+
+      // Get token details for each token with error handling
+      const tokenDetailsPromises = tokens.map(async token => {
+        try {
+          if (!token || typeof token !== 'string') {
+            throw new Error(`Invalid token: ${token}`);
+          }
+
+          const details = await getTokenDetails(token);
+          if (!details) {
+            console.warn(`No details found for token: ${token}`);
+            return null;
+          }
+          return details;
+        } catch (error) {
+          console.error(`Error fetching details for token ${token}:`, error);
+          return null;
+        }
+      });
+
+      const tokenDetails = await Promise.all(tokenDetailsPromises);
       
-      // Get token prices
-      const tokenIds = tokenDetails
-        .filter(detail => detail !== null)
-        .map(detail => detail!.id);
+      // Filter out failed lookups and get valid token IDs
+      const validTokenDetails = tokenDetails.filter(detail => detail !== null);
       
-      const prices = await getTokenPrices(tokenIds);
+      if (validTokenDetails.length === 0) {
+        throw new Error('No valid token details found');
+      }
+
+      const tokenIds = validTokenDetails
+        .filter((detail): detail is NonNullable<typeof detail> => detail !== null)
+        .map(detail => detail.id);
       
-      results.primary.coingecko = {
-        tokenDetails,
-        prices
-      };
+      // Get token prices with error handling
+      try {
+        const prices = await getTokenPrices(tokenIds);
+        
+        results.primary.coingecko = {
+          tokenDetails: validTokenDetails,
+          prices
+        };
+      } catch (error) {
+        console.error('Error fetching token prices:', error);
+        throw new Error('Failed to fetch token prices');
+      }
     }
 
     // Handle news data requests
     if (spec.primary.news) {
       // News data would be handled by a separate service
-      // For now, we'll return a placeholder
       results.primary.news = {
         status: 'success',
         message: 'News data would be fetched here'
@@ -894,7 +1102,6 @@ export async function executeAggregatorCalls(spec: AggregatorSpec) {
     // Handle regulatory data requests
     if (spec.primary.regulatory) {
       // Regulatory data would be handled by a separate service
-      // For now, we'll return a placeholder
       results.primary.regulatory = {
         status: 'success',
         message: 'Regulatory data would be fetched here'
@@ -904,20 +1111,929 @@ export async function executeAggregatorCalls(spec: AggregatorSpec) {
     // Handle security data requests
     if (spec.primary.security) {
       // Security data would be handled by a separate service
-      // For now, we'll return a placeholder
       results.primary.security = {
         status: 'success',
         message: 'Security data would be fetched here'
       };
     }
 
+    return results;
+
   } catch (error) {
     console.error('Error executing aggregator calls:', error);
-    results.error = error instanceof Error ? error.message : 'Unknown error';
+    
+    // Enhanced error handling with specific error types
+    if (error instanceof Error) {
+      if (error.message.includes('rate limit')) {
+        throw new Error('API rate limit exceeded. Please try again in a moment.');
+      }
+      if (error.message.includes('API key')) {
+        throw new Error('API configuration error. Please check your settings.');
+      }
+      if (error.message.includes('No valid token')) {
+        throw new Error('Could not find data for the requested tokens. Please verify the token symbols.');
+      }
+      if (error.message.includes('Too many tokens')) {
+        throw new Error('Please request fewer tokens (maximum 5 at a time).');
+      }
+      if (error.message.includes('Invalid token')) {
+        throw new Error('Invalid token symbol provided. Please check the token name.');
+      }
+    }
+    
+    throw new Error('Failed to fetch token data. Please try again.');
+  }
+}
+
+================================================================================
+File: lib/agents/blockchain-orchestrator.ts
+================================================================================
+
+import { contractDeploymentAgent, DeploymentParams, DeploymentResult } from './deployment/contract-deployment-agent';
+import { tokenTransferAgent, TransferParams, TransferResult } from './transaction/token-transfer-agent';
+import { walletService, WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { tokenRegistry, TokenInfo } from '../blockchain/token-registry';
+import { getTemplate, ContractTemplate } from './deployment/contract-templates';
+
+// Helper functions for contract templates
+async function getAllTemplates(): Promise<ContractTemplate[]> {
+  // In a real implementation, this would fetch all templates from a database or API
+  // For now, we'll return a simple array of templates
+  const templates: ContractTemplate[] = [];
+  
+  const erc20Template = await getTemplate('ERC20');
+  const erc721Template = await getTemplate('ERC721');
+  const erc1155Template = await getTemplate('ERC1155');
+  
+  if (erc20Template) templates.push(erc20Template);
+  if (erc721Template) templates.push(erc721Template);
+  if (erc1155Template) templates.push(erc1155Template);
+  
+  return templates;
+}
+
+async function getTemplatesByCategory(category: string): Promise<ContractTemplate[]> {
+  // In a real implementation, this would filter templates by category
+  const allTemplates = await getAllTemplates();
+  return allTemplates.filter(template => template.category === category);
+}
+
+// Blockchain action types
+export type BlockchainActionType = 
+  | 'CONNECT_WALLET'
+  | 'DISCONNECT_WALLET'
+  | 'DEPLOY_CONTRACT'
+  | 'TRANSFER_TOKENS'
+  | 'GET_TOKEN_INFO'
+  | 'GET_CONTRACT_TEMPLATES'
+  | 'GET_DEPLOYMENT_STATUS'
+  | 'GET_TRANSFER_STATUS';
+
+// Blockchain action parameters
+export interface BlockchainActionParams {
+  actionType: BlockchainActionType;
+  walletParams?: WalletConnectionOptions;
+  deploymentParams?: DeploymentParams;
+  transferParams?: TransferParams;
+  tokenAddress?: `0x${string}`;
+  chainId?: number;
+  templateCategory?: string;
+  transactionHash?: `0x${string}`;
+}
+
+// Blockchain action result
+export interface BlockchainActionResult {
+  success: boolean;
+  actionType: BlockchainActionType;
+  data?: any;
+  error?: string;
+}
+
+export class BlockchainOrchestrator {
+  // Handle blockchain actions
+  async handleAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
+    try {
+      switch (params.actionType) {
+        case 'CONNECT_WALLET':
+          return await this.connectWallet(params.walletParams!);
+          
+        case 'DISCONNECT_WALLET':
+          return this.disconnectWallet();
+          
+        case 'DEPLOY_CONTRACT':
+          return await this.deployContract(params.deploymentParams!);
+          
+        case 'TRANSFER_TOKENS':
+          return await this.transferTokens(params.transferParams!);
+          
+        case 'GET_TOKEN_INFO':
+          return await this.getTokenInfo(params.tokenAddress!, params.chainId!);
+          
+        case 'GET_CONTRACT_TEMPLATES':
+          return await this.getContractTemplates(params.templateCategory);
+          
+        case 'GET_DEPLOYMENT_STATUS':
+          return this.getDeploymentStatus(params.transactionHash!);
+          
+        case 'GET_TRANSFER_STATUS':
+          return this.getTransferStatus(params.transactionHash!);
+          
+        default:
+          throw new Error(`Unknown action type: ${params.actionType}`);
+      }
+    } catch (error) {
+      console.error('Blockchain action error:', error);
+      return {
+        success: false,
+        actionType: params.actionType,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
-  return results;
+  // Connect wallet
+  private async connectWallet(params: WalletConnectionOptions): Promise<BlockchainActionResult> {
+    try {
+      const address = await walletService.connect(params);
+      return {
+        success: true,
+        actionType: 'CONNECT_WALLET',
+        data: { address }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'CONNECT_WALLET',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Disconnect wallet
+  private disconnectWallet(): BlockchainActionResult {
+    try {
+      walletService.disconnect();
+      return {
+        success: true,
+        actionType: 'DISCONNECT_WALLET'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'DISCONNECT_WALLET',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Deploy contract
+  private async deployContract(params: DeploymentParams): Promise<BlockchainActionResult> {
+    try {
+      const result = await contractDeploymentAgent.deployContract(params);
+      return {
+        success: true,
+        actionType: 'DEPLOY_CONTRACT',
+        data: result
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'DEPLOY_CONTRACT',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Transfer tokens
+  private async transferTokens(params: TransferParams): Promise<BlockchainActionResult> {
+    try {
+      const result = await tokenTransferAgent.transferTokens(params);
+      return {
+        success: true,
+        actionType: 'TRANSFER_TOKENS',
+        data: result
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'TRANSFER_TOKENS',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Get token info
+  private async getTokenInfo(tokenAddress: `0x${string}`, chainId: number): Promise<BlockchainActionResult> {
+    try {
+      let tokenInfo = tokenRegistry.getToken(tokenAddress, chainId);
+      
+      if (!tokenInfo) {
+        // Try to load token info from blockchain
+        tokenInfo = await tokenRegistry.loadTokenInfo(tokenAddress, chainId);
+      }
+      
+      return {
+        success: true,
+        actionType: 'GET_TOKEN_INFO',
+        data: tokenInfo
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'GET_TOKEN_INFO',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Get contract templates
+  private async getContractTemplates(category?: string): Promise<BlockchainActionResult> {
+    try {
+      let templates: ContractTemplate[];
+      
+      if (category) {
+        templates = await getTemplatesByCategory(category);
+      } else {
+        templates = await getAllTemplates();
+      }
+      
+      return {
+        success: true,
+        actionType: 'GET_CONTRACT_TEMPLATES',
+        data: templates
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'GET_CONTRACT_TEMPLATES',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Get deployment status
+  private getDeploymentStatus(transactionHash: `0x${string}`): BlockchainActionResult {
+    try {
+      const deployment = contractDeploymentAgent.getDeployment(transactionHash);
+      
+      if (!deployment) {
+        throw new Error(`Deployment with hash ${transactionHash} not found`);
+      }
+      
+      return {
+        success: true,
+        actionType: 'GET_DEPLOYMENT_STATUS',
+        data: deployment
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'GET_DEPLOYMENT_STATUS',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  // Get transfer status
+  private getTransferStatus(transactionHash: `0x${string}`): BlockchainActionResult {
+    try {
+      const transfer = tokenTransferAgent.getTransfer(transactionHash);
+      
+      if (!transfer) {
+        throw new Error(`Transfer with hash ${transactionHash} not found`);
+      }
+      
+      return {
+        success: true,
+        actionType: 'GET_TRANSFER_STATUS',
+        data: transfer
+      };
+    } catch (error) {
+      return {
+        success: false,
+        actionType: 'GET_TRANSFER_STATUS',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
 }
+
+// Export singleton instance
+export const blockchainOrchestrator = new BlockchainOrchestrator(); 
+
+================================================================================
+File: lib/agents/deployment/contract-deployment-agent.ts
+================================================================================
+
+import { parseAbi, encodeAbiParameters } from 'viem';
+import { walletService, TransactionOptions, WalletIntegrationService } from '../../blockchain/wallet-integration';
+import { publicClient } from '../../blockchain/providers';
+import { validateContract } from '../security/contract-validator';
+import { ContractTemplate, getTemplate } from './contract-templates';
+import { compile } from './solidity-compiler';
+
+export interface DeploymentParams {
+  // Contract source or template information
+  source?: string;
+  templateId?: string;
+  templateParams?: Record<string, any>;
+  
+  // Constructor parameters (if any)
+  constructorArgs?: any[];
+  
+  // Deployment options
+  value?: string; // ETH value in string format (e.g. "0.1")
+  gasLimit?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  
+  // Verification options
+  verify?: boolean;
+  compilerVersion?: string;
+  optimizationRuns?: number;
+}
+
+export interface DeploymentResult {
+  transactionHash: `0x${string}`;
+  contractAddress: `0x${string}` | null;
+  deploymentStatus: 'pending' | 'success' | 'failed';
+  abi: any[];
+  bytecode: `0x${string}`;
+  constructorArgs: any[];
+  gasUsed?: bigint;
+  effectiveGasPrice?: bigint;
+  receipt?: any;
+  error?: string;
+}
+
+export class ContractDeploymentAgent {
+  private deployments = new Map<string, DeploymentResult>();
+
+  // Generate contract from template or use provided source
+  private async getContractSource(params: DeploymentParams): Promise<string> {
+    // If source is provided directly, use it
+    if (params.source) {
+      return params.source;
+    }
+    
+    // If template ID is provided, get template and fill parameters
+    if (params.templateId) {
+      const template = await getTemplate(params.templateId);
+      if (!template) {
+        throw new Error(`Template with ID ${params.templateId} not found`);
+      }
+      
+      // Replace template parameters
+      let source = template.source;
+      if (params.templateParams) {
+        for (const [key, value] of Object.entries(params.templateParams)) {
+          const placeholder = `{{${key}}}`;
+          source = source.replace(new RegExp(placeholder, 'g'), String(value));
+        }
+      }
+      
+      return source;
+    }
+    
+    throw new Error('Either source or templateId must be provided');
+  }
+
+  // Deploy a smart contract
+  async deployContract(params: DeploymentParams): Promise<DeploymentResult> {
+    try {
+      // Check if wallet is connected
+      if (!walletService.isConnected()) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Get contract source
+      const source = await this.getContractSource(params);
+      
+      // Validate contract security
+      const securityResults = await validateContract(source);
+      if (!securityResults.valid) {
+        throw new Error(`Contract failed security validation: ${securityResults.issues.map(i => i.title).join(', ')}`);
+      }
+      
+      // Compile the contract
+      const compilation = await compile(source, {
+        optimizer: {
+          enabled: true,
+          runs: params.optimizationRuns || 200
+        },
+        version: params.compilerVersion
+      });
+      
+      if (compilation.errors && compilation.errors.length > 0) {
+        throw new Error(`Compilation failed: ${compilation.errors.map((e: { message: string }) => e.message).join(', ')}`);
+      }
+      
+      // Find the main contract (assuming it's the last one)
+      const contractNames = Object.keys(compilation.contracts);
+      const contractName = contractNames[contractNames.length - 1];
+      const contract = compilation.contracts[contractName];
+      
+      // Prepare deployment data
+      const bytecode = contract.evm.bytecode.object as `0x${string}`;
+      const abi = JSON.parse(contract.abi);
+      
+      // Encode constructor arguments if provided
+      let data = bytecode;
+      if (params.constructorArgs && params.constructorArgs.length > 0) {
+        // Find constructor in ABI
+        const constructorAbi = abi.find((item: any) => item.type === 'constructor');
+        if (constructorAbi) {
+          const encodedArgs = encodeAbiParameters(
+            constructorAbi.inputs,
+            params.constructorArgs
+          );
+          data = `${bytecode}${encodedArgs.slice(2)}`; // remove 0x prefix from args
+        }
+      }
+      
+      // Prepare transaction options
+      const txOptions: TransactionOptions = {
+        to: '0x' as `0x${string}`, // Empty address for contract deployment
+        data: data as `0x${string}`,
+        value: params.value ? WalletIntegrationService.parseEther(params.value) : 0n,
+      };
+      
+      // Add gas parameters if provided
+      if (params.gasLimit) {
+        txOptions.gasLimit = BigInt(params.gasLimit);
+      }
+      if (params.maxFeePerGas) {
+        txOptions.maxFeePerGas = BigInt(params.maxFeePerGas);
+      }
+      if (params.maxPriorityFeePerGas) {
+        txOptions.maxPriorityFeePerGas = BigInt(params.maxPriorityFeePerGas);
+      }
+      
+      // Send deployment transaction
+      const hash = await walletService.sendTransaction(txOptions);
+      
+      // Create initial deployment result
+      const deploymentResult: DeploymentResult = {
+        transactionHash: hash,
+        contractAddress: null,
+        deploymentStatus: 'pending',
+        abi,
+        bytecode,
+        constructorArgs: params.constructorArgs || []
+      };
+      
+      // Store the deployment
+      this.deployments.set(hash, deploymentResult);
+      
+      // Wait for transaction confirmation in the background
+      this.waitForDeployment(hash, params.verify);
+      
+      return deploymentResult;
+      
+    } catch (error) {
+      console.error('Contract deployment error:', error);
+      throw new Error(`Failed to deploy contract: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Wait for deployment confirmation
+  private async waitForDeployment(hash: `0x${string}`, verify: boolean = false): Promise<void> {
+    try {
+      // Wait for transaction receipt
+      const receipt = await walletService.waitForTransaction(hash);
+      
+      // Update deployment result
+      const deployment = this.deployments.get(hash);
+      if (deployment) {
+        deployment.deploymentStatus = receipt.status === 'success' ? 'success' : 'failed';
+        deployment.contractAddress = receipt.contractAddress as `0x${string}` || null;
+        deployment.gasUsed = receipt.gasUsed;
+        deployment.effectiveGasPrice = receipt.effectiveGasPrice;
+        deployment.receipt = receipt;
+        
+        // Verify contract on Etherscan if requested
+        if (verify && receipt.status === 'success' && receipt.contractAddress) {
+          try {
+            // Verification logic would go here
+            // This would typically call the Etherscan API
+            console.log(`Contract verification requested for ${receipt.contractAddress}`);
+          } catch (verifyError) {
+            console.error('Contract verification error:', verifyError);
+            deployment.error = `Deployment succeeded but verification failed: ${verifyError instanceof Error ? verifyError.message : 'Unknown error'}`;
+          }
+        }
+        
+        this.deployments.set(hash, deployment);
+      }
+    } catch (error) {
+      console.error('Deployment confirmation error:', error);
+      
+      // Update deployment status to failed
+      const deployment = this.deployments.get(hash);
+      if (deployment) {
+        deployment.deploymentStatus = 'failed';
+        deployment.error = `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        this.deployments.set(hash, deployment);
+      }
+    }
+  }
+
+  // Get deployment status
+  getDeployment(hash: `0x${string}`): DeploymentResult | null {
+    return this.deployments.get(hash) || null;
+  }
+
+  // Get all deployments
+  getAllDeployments(): DeploymentResult[] {
+    return Array.from(this.deployments.values());
+  }
+}
+
+// Export singleton instance
+export const contractDeploymentAgent = new ContractDeploymentAgent(); 
+
+================================================================================
+File: lib/agents/deployment/contract-templates.ts
+================================================================================
+
+// Contract template interface
+export interface ContractTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: 'token' | 'nft' | 'defi' | 'utility' | 'governance';
+  source: string;
+  parameters: TemplateParameter[];
+  defaultValues?: Record<string, any>;
+  version: string;
+  author: string;
+}
+
+// Template parameter interface
+export interface TemplateParameter {
+  name: string;
+  description: string;
+  type: 'string' | 'number' | 'boolean' | 'address' | 'uint256' | 'uint8';
+  required: boolean;
+  defaultValue?: any;
+  options?: any[];
+}
+
+// Template registry
+const templates: Map<string, ContractTemplate> = new Map();
+
+// Get a template by ID
+export async function getTemplate(id: string): Promise<ContractTemplate | null> {
+  return templates.get(id) || null;
+}
+
+// Get all templates
+export async function getAllTemplates(): Promise<ContractTemplate[]> {
+  return Array.from(templates.values());
+}
+
+// Get templates by category
+export async function getTemplatesByCategory(category: string): Promise<ContractTemplate[]> {
+  return Array.from(templates.values()).filter(template => template.category === category);
+}
+
+// Register a template
+export function registerTemplate(template: ContractTemplate): void {
+  templates.set(template.id, template);
+}
+
+// ERC20 Token Template
+const erc20TokenTemplate: ContractTemplate = {
+  id: 'erc20-token',
+  name: 'ERC20 Token',
+  description: 'Standard ERC20 token with name, symbol, and supply',
+  category: 'token',
+  source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract {{name}} is ERC20, Ownable {
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialSupply,
+        address _owner
+    ) ERC20(_name, _symbol) Ownable(_owner) {
+        _mint(_owner, _initialSupply * 10 ** decimals());
+    }
+    
+    function mint(address to, uint256 amount) public onlyOwner {
+        _mint(to, amount);
+    }
+}`,
+  parameters: [
+    {
+      name: 'name',
+      description: 'Token name',
+      type: 'string',
+      required: true,
+      defaultValue: 'My Token'
+    },
+    {
+      name: '_name',
+      description: 'Token name parameter',
+      type: 'string',
+      required: true,
+      defaultValue: 'My Token'
+    },
+    {
+      name: '_symbol',
+      description: 'Token symbol',
+      type: 'string',
+      required: true,
+      defaultValue: 'MTK'
+    },
+    {
+      name: '_initialSupply',
+      description: 'Initial token supply',
+      type: 'uint256',
+      required: true,
+      defaultValue: '1000000'
+    },
+    {
+      name: '_owner',
+      description: 'Token owner address',
+      type: 'address',
+      required: true
+    }
+  ],
+  defaultValues: {
+    name: 'MyToken'
+  },
+  version: '1.0.0',
+  author: 'BlockchainGPT'
+};
+
+// NFT Collection Template
+const nftCollectionTemplate: ContractTemplate = {
+  id: 'nft-collection',
+  name: 'NFT Collection',
+  description: 'ERC721 NFT collection with metadata',
+  category: 'nft',
+  source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+
+contract {{name}} is ERC721Enumerable, Ownable {
+    using Strings for uint256;
+    
+    string public baseURI;
+    uint256 public maxSupply;
+    uint256 public price;
+    bool public saleIsActive = false;
+    
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        string memory _initBaseURI,
+        uint256 _maxSupply,
+        uint256 _price,
+        address _owner
+    ) ERC721(_name, _symbol) Ownable(_owner) {
+        baseURI = _initBaseURI;
+        maxSupply = _maxSupply;
+        price = _price;
+    }
+    
+    function _baseURI() internal view override returns (string memory) {
+        return baseURI;
+    }
+    
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        require(_exists(tokenId), "Token does not exist");
+        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI, tokenId.toString(), ".json")) : "";
+    }
+    
+    function mint(uint256 numberOfTokens) public payable {
+        require(saleIsActive, "Sale is not active");
+        require(numberOfTokens > 0, "Must mint at least 1 token");
+        require(totalSupply() + numberOfTokens <= maxSupply, "Would exceed max supply");
+        require(msg.value >= price * numberOfTokens, "Insufficient payment");
+        
+        for (uint256 i = 0; i < numberOfTokens; i++) {
+            uint256 tokenId = totalSupply() + 1;
+            _safeMint(msg.sender, tokenId);
+        }
+    }
+    
+    function setSaleState(bool _saleIsActive) public onlyOwner {
+        saleIsActive = _saleIsActive;
+    }
+    
+    function setBaseURI(string memory _newBaseURI) public onlyOwner {
+        baseURI = _newBaseURI;
+    }
+    
+    function setPrice(uint256 _newPrice) public onlyOwner {
+        price = _newPrice;
+    }
+    
+    function withdraw() public onlyOwner {
+        uint256 balance = address(this).balance;
+        payable(owner()).transfer(balance);
+    }
+}`,
+  parameters: [
+    {
+      name: 'name',
+      description: 'Contract name',
+      type: 'string',
+      required: true,
+      defaultValue: 'MyNFTCollection'
+    },
+    {
+      name: '_name',
+      description: 'Collection name',
+      type: 'string',
+      required: true,
+      defaultValue: 'My NFT Collection'
+    },
+    {
+      name: '_symbol',
+      description: 'Collection symbol',
+      type: 'string',
+      required: true,
+      defaultValue: 'MNFT'
+    },
+    {
+      name: '_initBaseURI',
+      description: 'Base URI for token metadata',
+      type: 'string',
+      required: true,
+      defaultValue: 'https://example.com/metadata/'
+    },
+    {
+      name: '_maxSupply',
+      description: 'Maximum supply of NFTs',
+      type: 'uint256',
+      required: true,
+      defaultValue: '10000'
+    },
+    {
+      name: '_price',
+      description: 'Price per NFT in wei',
+      type: 'uint256',
+      required: true,
+      defaultValue: '50000000000000000' // 0.05 ETH
+    },
+    {
+      name: '_owner',
+      description: 'Collection owner address',
+      type: 'address',
+      required: true
+    }
+  ],
+  defaultValues: {
+    name: 'MyNFTCollection'
+  },
+  version: '1.0.0',
+  author: 'BlockchainGPT'
+};
+
+// Simple Storage Template
+const simpleStorageTemplate: ContractTemplate = {
+  id: 'simple-storage',
+  name: 'Simple Storage',
+  description: 'Basic contract for storing and retrieving a value',
+  category: 'utility',
+  source: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract {{name}} {
+    uint256 private value;
+    address public owner;
+    
+    event ValueChanged(uint256 newValue);
+    
+    constructor(uint256 _initialValue) {
+        value = _initialValue;
+        owner = msg.sender;
+    }
+    
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the owner");
+        _;
+    }
+    
+    function setValue(uint256 _newValue) public onlyOwner {
+        value = _newValue;
+        emit ValueChanged(_newValue);
+    }
+    
+    function getValue() public view returns (uint256) {
+        return value;
+    }
+    
+    function transferOwnership(address _newOwner) public onlyOwner {
+        require(_newOwner != address(0), "Invalid address");
+        owner = _newOwner;
+    }
+}`,
+  parameters: [
+    {
+      name: 'name',
+      description: 'Contract name',
+      type: 'string',
+      required: true,
+      defaultValue: 'SimpleStorage'
+    },
+    {
+      name: '_initialValue',
+      description: 'Initial stored value',
+      type: 'uint256',
+      required: true,
+      defaultValue: '0'
+    }
+  ],
+  defaultValues: {
+    name: 'SimpleStorage'
+  },
+  version: '1.0.0',
+  author: 'BlockchainGPT'
+};
+
+// Register templates
+registerTemplate(erc20TokenTemplate);
+registerTemplate(nftCollectionTemplate);
+registerTemplate(simpleStorageTemplate); 
+
+================================================================================
+File: lib/agents/deployment/solidity-compiler.ts
+================================================================================
+
+import * as solc from 'solc';
+
+export interface CompilerOptions {
+  optimizer?: {
+    enabled: boolean;
+    runs: number;
+  };
+  version?: string;
+  evmVersion?: string;
+}
+
+export interface CompilationResult {
+  contracts: Record<string, any>;
+  sources: Record<string, any>;
+  errors?: Array<{
+    message: string;
+    severity: 'error' | 'warning';
+    type: string;
+  }>;
+}
+
+export async function compile(source: string, options: CompilerOptions = {}): Promise<CompilationResult> {
+  // Prepare compiler input
+  const input = {
+    language: 'Solidity',
+    sources: {
+      'main.sol': {
+        content: source
+      }
+    },
+    settings: {
+      outputSelection: {
+        '*': {
+          '*': ['abi', 'evm.bytecode', 'evm.deployedBytecode', 'metadata']
+        }
+      },
+      optimizer: options.optimizer || {
+        enabled: false,
+        runs: 200
+      },
+      evmVersion: options.evmVersion || 'paris'
+    }
+  };
+
+  // Compile the contract
+  const output = JSON.parse(solc.compile(JSON.stringify(input)));
+
+  // Check for errors
+  const errors = output.errors?.filter((error: any) => error.severity === 'error');
+  if (errors && errors.length > 0) {
+    return {
+      contracts: {},
+      sources: {},
+      errors: output.errors
+    };
+  }
+
+  return {
+    contracts: output.contracts['main.sol'],
+    sources: output.sources,
+    errors: output.errors
+  };
+} 
 
 ================================================================================
 File: lib/agents/index.ts
@@ -1452,38 +2568,38 @@ export async function getRegulatoryUpdates(
     // Fetch from multiple sources and combine results
     const [crystalUpdates, chainalysisUpdates] = await Promise.all([
       params.asset ? fetchCrystalData(params.asset).then(data => ({
-        id: `crystal-${Date.now()}`,
-        title: `Risk Assessment for ${params.asset}`,
-        summary: `Risk score: ${data.riskScore}`,
-        jurisdiction: 'Global',
+        id: `crystal-${params.asset}`,
+        title: `Risk assessment for ${params.asset}`,
+        summary: `Crystal Blockchain risk assessment for ${params.asset}`,
+        jurisdiction: 'GLOBAL',
         authority: 'Crystal Blockchain',
         date: data.lastUpdated,
-        url: '',
-        category: 'RISK_ASSESSMENT',
+        url: 'https://crystalblockchain.com/',
+        category: data.categories[0] || 'RISK_ASSESSMENT',
         impact: data.riskLevel,
         status: 'ENACTED',
         relatedAssets: [params.asset]
       })) : Promise.resolve(null),
-      
       params.asset ? fetchChainalysisData(params.asset).then(data => ({
-        id: `chainalysis-${Date.now()}`,
-        title: `Compliance Report for ${params.asset}`,
-        summary: data.summary || 'Compliance assessment report',
-        jurisdiction: 'Global',
+        id: `chainalysis-${params.asset}`,
+        title: `Chainalysis report for ${params.asset}`,
+        summary: data.summary || `Chainalysis report for ${params.asset}`,
+        jurisdiction: 'GLOBAL',
         authority: 'Chainalysis',
         date: new Date().toISOString(),
-        url: '',
-        category: 'COMPLIANCE',
+        url: 'https://chainalysis.com/',
+        category: 'RISK_ASSESSMENT',
         impact: data.riskLevel || 'MEDIUM',
         status: 'ENACTED',
         relatedAssets: [params.asset]
       })) : Promise.resolve(null)
     ]);
 
-    const updates: RegulatoryUpdate[] = [
+    // Use type assertion to help TypeScript understand the filter
+    const updates = [
       crystalUpdates,
       chainalysisUpdates
-    ].filter((update): update is RegulatoryUpdate => update !== null);
+    ].filter(Boolean) as RegulatoryUpdate[];
 
     regulatoryCache.set(cacheKey, updates);
     return updates;
@@ -1519,6 +2635,203 @@ export async function getComplianceRisk(
     throw error;
   }
 }
+
+================================================================================
+File: lib/agents/security/contract-validator.ts
+================================================================================
+
+// Security issue interface
+export interface SecurityIssue {
+  severity: 'high' | 'medium' | 'low' | 'info';
+  title: string;
+  description: string;
+  line?: number;
+  column?: number;
+}
+
+// Validation result interface
+export interface ValidationResult {
+  valid: boolean;
+  issues: SecurityIssue[];
+}
+
+// Basic patterns to check for common security issues
+const SECURITY_PATTERNS = [
+  {
+    pattern: /selfdestruct|suicide/i,
+    severity: 'high' as const,
+    title: 'Self-destruct found',
+    description: 'The contract contains a self-destruct function which can permanently destroy the contract.'
+  },
+  {
+    pattern: /tx\.origin/i,
+    severity: 'high' as const,
+    title: 'tx.origin used for authentication',
+    description: 'Using tx.origin for authentication is vulnerable to phishing attacks.'
+  },
+  {
+    pattern: /block\.(timestamp|number|difficulty)/i,
+    severity: 'medium' as const,
+    title: 'Block properties used as source of randomness',
+    description: 'Block properties like timestamp, number, or difficulty are not secure sources of randomness.'
+  },
+  {
+    pattern: /function\s+\w+\s*\(\s*\)\s*public\s+payable\s*\{\s*\}/i,
+    severity: 'medium' as const,
+    title: 'Empty payable function',
+    description: 'Contract has an empty payable function which can lock funds.'
+  },
+  {
+    pattern: /assembly\s*\{/i,
+    severity: 'medium' as const,
+    title: 'Assembly code used',
+    description: 'Contract uses assembly code which bypasses Solidity safety features.'
+  },
+  {
+    pattern: /\.call\.value\s*\(/i,
+    severity: 'medium' as const,
+    title: 'Low-level call with value',
+    description: 'Low-level calls with value can lead to reentrancy attacks if not properly guarded.'
+  },
+  {
+    pattern: /\.transfer\s*\(/i,
+    severity: 'low' as const,
+    title: 'Transfer used',
+    description: 'Consider using call instead of transfer as transfer has a gas limit of 2300 gas.'
+  },
+  {
+    pattern: /pragma\s+solidity\s+(\^|>|>=|<|<=)\s*0\.8/i,
+    severity: 'info' as const,
+    title: 'Solidity version',
+    description: 'Contract uses Solidity version 0.8.x which has built-in overflow protection.'
+  }
+];
+
+// Validate a contract for security issues
+export async function validateContract(source: string): Promise<ValidationResult> {
+  const issues: SecurityIssue[] = [];
+  
+  // Check for security patterns
+  for (const pattern of SECURITY_PATTERNS) {
+    const matches = source.match(pattern.pattern);
+    if (matches) {
+      issues.push({
+        severity: pattern.severity,
+        title: pattern.title,
+        description: pattern.description
+      });
+    }
+  }
+  
+  // Check for reentrancy vulnerabilities
+  if (
+    source.includes('.call{value:') && 
+    !source.includes('ReentrancyGuard') && 
+    !source.includes('nonReentrant')
+  ) {
+    issues.push({
+      severity: 'high',
+      title: 'Potential reentrancy vulnerability',
+      description: 'Contract uses .call{value:} without reentrancy protection. Consider using ReentrancyGuard.'
+    });
+  }
+  
+  // Check for unchecked external calls
+  if (
+    (source.includes('.call(') || source.includes('.call{')) && 
+    !source.match(/require\s*\(\s*\w+\s*\)/)
+  ) {
+    issues.push({
+      severity: 'medium',
+      title: 'Unchecked external call',
+      description: 'External call result is not checked. Always verify the return value of low-level calls.'
+    });
+  }
+  
+  // Check for unbounded loops
+  if (source.match(/for\s*\(\s*.*;\s*.*;\s*.*\)/)) {
+    const hasArrayLength = source.match(/for\s*\(\s*.*;\s*\w+\s*<\s*\w+\.length/);
+    if (hasArrayLength) {
+      issues.push({
+        severity: 'medium',
+        title: 'Potentially unbounded loop',
+        description: 'Loop over array without fixed bounds could run out of gas for large arrays.'
+      });
+    }
+  }
+  
+  // Check for proper visibility
+  if (source.match(/function\s+\w+\s*\([^)]*\)\s*\{/)) {
+    issues.push({
+      severity: 'medium',
+      title: 'Missing function visibility',
+      description: 'Functions without explicit visibility default to public.'
+    });
+  }
+  
+  // Check for state variables without visibility
+  if (source.match(/^\s*\w+\s+\w+\s*;/m)) {
+    issues.push({
+      severity: 'low',
+      title: 'State variable missing visibility',
+      description: 'State variables should have explicit visibility (public, private, internal).'
+    });
+  }
+  
+  // Determine if the contract is valid based on high severity issues
+  const hasHighSeverityIssues = issues.some(issue => issue.severity === 'high');
+  
+  return {
+    valid: !hasHighSeverityIssues,
+    issues
+  };
+}
+
+// Validate a transaction before sending
+export async function validateTransaction(
+  to: string, 
+  value: bigint, 
+  data: string | undefined
+): Promise<ValidationResult> {
+  const issues: SecurityIssue[] = [];
+  
+  // Check if sending to address(0)
+  if (to === '0x0000000000000000000000000000000000000000') {
+    issues.push({
+      severity: 'high',
+      title: 'Sending to zero address',
+      description: 'Transaction is sending to the zero address, which will burn the funds.'
+    });
+  }
+  
+  // Check if sending a large amount of ETH
+  if (value > 10000000000000000000n) { // > 10 ETH
+    issues.push({
+      severity: 'medium',
+      title: 'Large value transfer',
+      description: 'Transaction is sending a large amount of ETH. Please verify the recipient address.'
+    });
+  }
+  
+  // Check if the transaction has data but no value (potential contract interaction)
+  if (data && data !== '0x' && value === 0n) {
+    // This is likely a contract interaction, which is fine
+  }
+  
+  // Check if the transaction has both value and data (potential contract interaction with value)
+  if (data && data !== '0x' && value > 0n) {
+    issues.push({
+      severity: 'low',
+      title: 'Contract interaction with value',
+      description: 'Transaction is sending ETH to a contract. Ensure the contract can handle ETH transfers.'
+    });
+  }
+  
+  return {
+    valid: !issues.some(issue => issue.severity === 'high'),
+    issues
+  };
+} 
 
 ================================================================================
 File: lib/agents/summarization.ts
@@ -1782,7 +3095,7 @@ export async function generateSummary(input: SummarizationInput): Promise<string
     // If no valid data, provide a helpful response
     if (!hasValidData && analysis.classification.needsApiCall) {
       messages.push({
-        role: "user" as const,
+        role: "system" as const,
         content: `Generate a helpful response for a failed data fetch. Query: "${userQuery}". 
 Consider:
 1. Common reasons for missing data
@@ -1794,7 +3107,7 @@ Consider:
     } else {
       // Add the current query and data
       messages.push({
-        role: "user" as const,
+        role: "system" as const,
         content: `Query: ${userQuery}\n\nAnalysis Context:\n${JSON.stringify(analysis, null, 2)}\n\nAvailable Data:\n${JSON.stringify(aggregatorResult, null, 2)}`
       });
     }
@@ -1911,6 +3224,205 @@ export class TokenCache {
     }
   }
 }
+
+================================================================================
+File: lib/agents/transaction/token-transfer-agent.ts
+================================================================================
+
+import { walletService, WalletIntegrationService } from '../../blockchain/wallet-integration';
+import { tokenRegistry } from '../../blockchain/token-registry';
+import { validateTransaction } from '../security/contract-validator';
+import { publicClient } from '../../blockchain/providers';
+
+export interface TransferParams {
+  // Token information (null for ETH)
+  tokenAddress?: `0x${string}` | null;
+  
+  // Transfer details
+  to: `0x${string}`;
+  amount: string;
+  
+  // Chain information
+  chainId: number;
+  
+  // Transaction options
+  gasLimit?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+}
+
+export interface TransferResult {
+  transactionHash: `0x${string}`;
+  tokenAddress: `0x${string}` | null;
+  to: `0x${string}`;
+  amount: string;
+  amountInWei: bigint;
+  status: 'pending' | 'success' | 'failed';
+  receipt?: any;
+  error?: string;
+}
+
+export class TokenTransferAgent {
+  private transfers = new Map<string, TransferResult>();
+
+  // Transfer ETH or tokens
+  async transferTokens(params: TransferParams): Promise<TransferResult> {
+    try {
+      // Check if wallet is connected
+      if (!walletService.isConnected()) {
+        throw new Error('Wallet not connected');
+      }
+      
+      // Validate recipient address
+      if (!params.to || !params.to.startsWith('0x')) {
+        throw new Error('Invalid recipient address');
+      }
+      
+      // Validate amount
+      if (!params.amount || isNaN(Number(params.amount)) || Number(params.amount) <= 0) {
+        throw new Error('Invalid amount');
+      }
+      
+      // Determine if this is an ETH transfer or token transfer
+      const isEthTransfer = !params.tokenAddress;
+      
+      let amountInWei: bigint;
+      let txHash: `0x${string}`;
+      
+      if (isEthTransfer) {
+        // ETH transfer
+        amountInWei = WalletIntegrationService.parseEther(params.amount);
+        
+        // Validate transaction
+        const validationResult = await validateTransaction(params.to, amountInWei, undefined);
+        if (!validationResult.valid) {
+          throw new Error(`Transaction validation failed: ${validationResult.issues.map(i => i.title).join(', ')}`);
+        }
+        
+        // Prepare transaction options
+        const txOptions: any = {
+          to: params.to,
+          value: amountInWei,
+          data: undefined
+        };
+        
+        // Add gas parameters if provided
+        if (params.gasLimit) {
+          txOptions.gasLimit = BigInt(params.gasLimit);
+        }
+        if (params.maxFeePerGas) {
+          txOptions.maxFeePerGas = BigInt(params.maxFeePerGas);
+        }
+        if (params.maxPriorityFeePerGas) {
+          txOptions.maxPriorityFeePerGas = BigInt(params.maxPriorityFeePerGas);
+        }
+        
+        // Send transaction
+        txHash = await walletService.sendTransaction(txOptions);
+      } else {
+        // Token transfer
+        // Get token info
+        const tokenInfo = await tokenRegistry.getToken(params.tokenAddress!, params.chainId);
+        if (!tokenInfo) {
+          // Try to load token info from blockchain
+          await tokenRegistry.loadTokenInfo(params.tokenAddress!, params.chainId);
+        }
+        
+        // Convert amount to token decimals
+        const token = tokenRegistry.getToken(params.tokenAddress!, params.chainId);
+        if (!token) {
+          throw new Error(`Token information not found for ${params.tokenAddress}`);
+        }
+        
+        // Calculate amount in wei based on token decimals
+        amountInWei = WalletIntegrationService.parseEther(params.amount);
+        if (token.decimals !== 18) {
+          // Adjust for token decimals
+          const decimalsDiff = 18 - token.decimals;
+          if (decimalsDiff > 0) {
+            amountInWei = amountInWei / BigInt(10 ** decimalsDiff);
+          } else {
+            amountInWei = amountInWei * BigInt(10 ** Math.abs(decimalsDiff));
+          }
+        }
+        
+        // Transfer tokens
+        txHash = await tokenRegistry.transfer(
+          params.tokenAddress!,
+          params.to,
+          amountInWei,
+          params.chainId
+        );
+      }
+      
+      // Create transfer result
+      const transferResult: TransferResult = {
+        transactionHash: txHash,
+        tokenAddress: params.tokenAddress || null,
+        to: params.to,
+        amount: params.amount,
+        amountInWei,
+        status: 'pending'
+      };
+      
+      // Store the transfer
+      this.transfers.set(txHash, transferResult);
+      
+      // Wait for transaction confirmation in the background
+      this.waitForTransfer(txHash);
+      
+      return transferResult;
+    } catch (error) {
+      console.error('Token transfer error:', error);
+      throw new Error(`Failed to transfer tokens: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Wait for transfer confirmation
+  private async waitForTransfer(hash: `0x${string}`): Promise<void> {
+    try {
+      // Wait for transaction receipt
+      const receipt = await walletService.waitForTransaction(hash);
+      
+      // Update transfer result
+      const transfer = this.transfers.get(hash);
+      if (transfer) {
+        transfer.status = receipt.status === 'success' ? 'success' : 'failed';
+        transfer.receipt = receipt;
+        
+        this.transfers.set(hash, transfer);
+      }
+    } catch (error) {
+      console.error('Transfer confirmation error:', error);
+      
+      // Update transfer status to failed
+      const transfer = this.transfers.get(hash);
+      if (transfer) {
+        transfer.status = 'failed';
+        transfer.error = `Transaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        this.transfers.set(hash, transfer);
+      }
+    }
+  }
+
+  // Get transfer status
+  getTransfer(hash: `0x${string}`): TransferResult | null {
+    return this.transfers.get(hash) || null;
+  }
+
+  // Get all transfers
+  getAllTransfers(): TransferResult[] {
+    return Array.from(this.transfers.values());
+  }
+
+  // Get pending transfers
+  getPendingTransfers(): TransferResult[] {
+    return Array.from(this.transfers.values()).filter(transfer => transfer.status === 'pending');
+  }
+}
+
+// Export singleton instance
+export const tokenTransferAgent = new TokenTransferAgent(); 
 
 ================================================================================
 File: lib/agents/types.ts
@@ -2075,7 +3587,9 @@ export interface Agent1Input {
 export interface SummarizationInput {
   userQuery: string;
   analysis: RobustAnalysis;
-  aggregatorResult?: AggregatorResult;
+  aggregatorResult: AggregatorResult | null;
+  sessionId?: string;
+  enhancedContext?: string;
 }
 
 export interface AggregatorResult {
@@ -2083,6 +3597,7 @@ export interface AggregatorResult {
     coingecko?: any;
     defiLlama?: any;
     theGraph?: any;
+    coinmarketcap?: any;
   };
   fallback?: {
     googleSearch?: any;
@@ -2097,6 +3612,10 @@ export interface OrchestrationResult {
   aggregatorData: AggregatorResult | null;
   response: string;
   suggestions?: string[];
+  contextAnalysis?: {
+    isCoherent: boolean;
+    confidence: number;
+  };
 }
 
 // Aggregator specification
@@ -2105,6 +3624,9 @@ export interface AggregatorSpec {
     coingecko?: any;
     defiLlama?: any;
     theGraph?: any;
+    news?: any;
+    regulatory?: any;
+    security?: any;
   };
   fallback: {
     coingecko?: any;
@@ -2327,6 +3849,220 @@ export async function fetchChatResponse(query: string, context: any) {
 }
 
 ================================================================================
+File: lib/api/blockchain-api.ts
+================================================================================
+
+import { blockchainOrchestrator, BlockchainActionParams, BlockchainActionResult } from '../agents/blockchain-orchestrator';
+import { TokenInfo } from '../blockchain/token-registry';
+import { DeploymentResult, DeploymentParams } from '../agents/deployment/contract-deployment-agent';
+import { TransferResult, TransferParams } from '../agents/transaction/token-transfer-agent';
+import { ContractTemplate } from '../agents/deployment/contract-templates';
+import { WalletConnectionOptions } from '../blockchain/wallet-integration';
+
+/**
+ * Blockchain API Service
+ * 
+ * This service provides a simplified interface for frontend applications
+ * to interact with blockchain functionality.
+ */
+export class BlockchainApiService {
+  /**
+   * Connect to wallet
+   * @param provider - Wallet provider (metamask, walletconnect, etc.)
+   * @returns Connected wallet address
+   */
+  async connectWallet(provider: string): Promise<string> {
+    const walletParams: WalletConnectionOptions = { 
+      type: provider as any // Cast to any as a temporary solution
+    };
+    
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'CONNECT_WALLET',
+      walletParams
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to connect wallet');
+    }
+    
+    return result.data.address;
+  }
+  
+  /**
+   * Disconnect wallet
+   */
+  disconnectWallet(): void {
+    blockchainOrchestrator.handleAction({
+      actionType: 'DISCONNECT_WALLET'
+    });
+  }
+  
+  /**
+   * Deploy contract
+   * @param templateId - Contract template ID
+   * @param contractParams - Contract parameters
+   * @param options - Deployment options
+   * @returns Deployment result
+   */
+  async deployContract(
+    templateId: string,
+    contractParams: Record<string, any>,
+    options: {
+      value?: string;
+      gasLimit?: string;
+      maxFeePerGas?: string;
+      maxPriorityFeePerGas?: string;
+    } = {}
+  ): Promise<DeploymentResult> {
+    const deploymentParams: DeploymentParams = {
+      templateId,
+      templateParams: contractParams,
+      value: options.value,
+      gasLimit: options.gasLimit,
+      maxFeePerGas: options.maxFeePerGas,
+      maxPriorityFeePerGas: options.maxPriorityFeePerGas
+    };
+    
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'DEPLOY_CONTRACT',
+      deploymentParams
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to deploy contract');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Transfer tokens
+   * @param to - Recipient address
+   * @param amount - Amount to transfer
+   * @param tokenAddress - Token address (optional, if not provided, transfers ETH)
+   * @param options - Transfer options
+   * @returns Transfer result
+   */
+  async transferTokens(
+    to: string,
+    amount: string,
+    tokenAddress?: string,
+    options: {
+      gasLimit?: string;
+      maxFeePerGas?: string;
+      maxPriorityFeePerGas?: string;
+    } = {}
+  ): Promise<TransferResult> {
+    const transferParams: TransferParams = {
+      to: to as `0x${string}`,
+      amount,
+      tokenAddress: tokenAddress as `0x${string}` | undefined,
+      chainId: 1, // Default to Ethereum mainnet
+      gasLimit: options.gasLimit,
+      maxFeePerGas: options.maxFeePerGas,
+      maxPriorityFeePerGas: options.maxPriorityFeePerGas
+    };
+    
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'TRANSFER_TOKENS',
+      transferParams
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to transfer tokens');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Get token information
+   * @param tokenAddress - Token address
+   * @param chainId - Chain ID
+   * @returns Token information
+   */
+  async getTokenInfo(tokenAddress: string, chainId: number): Promise<TokenInfo> {
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'GET_TOKEN_INFO',
+      tokenAddress: tokenAddress as `0x${string}`,
+      chainId
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get token info');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Get contract templates
+   * @param category - Template category (optional)
+   * @returns List of contract templates
+   */
+  async getContractTemplates(category?: string): Promise<ContractTemplate[]> {
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'GET_CONTRACT_TEMPLATES',
+      templateCategory: category
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get contract templates');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Get deployment status
+   * @param transactionHash - Transaction hash
+   * @returns Deployment status
+   */
+  async getDeploymentStatus(transactionHash: string): Promise<DeploymentResult> {
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'GET_DEPLOYMENT_STATUS',
+      transactionHash: transactionHash as `0x${string}`
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get deployment status');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Get transfer status
+   * @param transactionHash - Transaction hash
+   * @returns Transfer status
+   */
+  async getTransferStatus(transactionHash: string): Promise<TransferResult> {
+    const result = await blockchainOrchestrator.handleAction({
+      actionType: 'GET_TRANSFER_STATUS',
+      transactionHash: transactionHash as `0x${string}`
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get transfer status');
+    }
+    
+    return result.data;
+  }
+  
+  /**
+   * Execute custom blockchain action
+   * @param params - Action parameters
+   * @returns Action result
+   */
+  async executeAction(params: BlockchainActionParams): Promise<BlockchainActionResult> {
+    return blockchainOrchestrator.handleAction(params);
+  }
+}
+
+// Export singleton instance
+export const blockchainApi = new BlockchainApiService(); 
+
+================================================================================
 File: lib/blockchain.ts
 ================================================================================
 
@@ -2356,7 +4092,7 @@ export async function processBlockchainQuery(query: string) {
     conversationContext.messages.push({ role: 'user', content: query });
     
     // Determine query type and get relevant data
-    let data;
+    let data: any;
     
     if (lowercaseQuery.includes('trending') || lowercaseQuery.includes('popular')) {
       const trendingTokens = await getTrendingTokens();
@@ -2409,6 +4145,734 @@ export async function processBlockchainQuery(query: string) {
 }
 
 ================================================================================
+File: lib/blockchain/abis/erc20-abi.ts
+================================================================================
+
+// ERC20 ABI
+export const erc20Abi = [
+  // Read-only functions
+  {
+    inputs: [],
+    name: 'name',
+    outputs: [{ type: 'string', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'symbol',
+    outputs: [{ type: 'string', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'decimals',
+    outputs: [{ type: 'uint8', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'totalSupply',
+    outputs: [{ type: 'uint256', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [{ type: 'address', name: 'account' }],
+    name: 'balanceOf',
+    outputs: [{ type: 'uint256', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [
+      { type: 'address', name: 'owner' },
+      { type: 'address', name: 'spender' }
+    ],
+    name: 'allowance',
+    outputs: [{ type: 'uint256', name: '' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  // Write functions
+  {
+    inputs: [
+      { type: 'address', name: 'recipient' },
+      { type: 'uint256', name: 'amount' }
+    ],
+    name: 'transfer',
+    outputs: [{ type: 'bool', name: '' }],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  {
+    inputs: [
+      { type: 'address', name: 'sender' },
+      { type: 'address', name: 'recipient' },
+      { type: 'uint256', name: 'amount' }
+    ],
+    name: 'transferFrom',
+    outputs: [{ type: 'bool', name: '' }],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  {
+    inputs: [
+      { type: 'address', name: 'spender' },
+      { type: 'uint256', name: 'amount' }
+    ],
+    name: 'approve',
+    outputs: [{ type: 'bool', name: '' }],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  },
+  // Events
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, type: 'address', name: 'from' },
+      { indexed: true, type: 'address', name: 'to' },
+      { indexed: false, type: 'uint256', name: 'value' }
+    ],
+    name: 'Transfer',
+    type: 'event'
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, type: 'address', name: 'owner' },
+      { indexed: true, type: 'address', name: 'spender' },
+      { indexed: false, type: 'uint256', name: 'value' }
+    ],
+    name: 'Approval',
+    type: 'event'
+  }
+] as const; 
+
+================================================================================
+File: lib/blockchain/providers.ts
+================================================================================
+
+import { createPublicClient, http } from 'viem';
+import { mainnet, sepolia, arbitrum, optimism, polygon } from 'viem/chains';
+
+// Get the RPC URL from environment variables or use default
+const getRpcUrl = (network: string): string => {
+  const envVar = `${network.toUpperCase()}_RPC_URL`;
+  return process.env[envVar] || getDefaultRpcUrl(network);
+};
+
+// Default public RPC URLs (consider using your own for production)
+const getDefaultRpcUrl = (network: string): string => {
+  switch (network) {
+    case 'mainnet': return 'https://eth-mainnet.g.alchemy.com/v2/demo';
+    case 'sepolia': return 'https://eth-sepolia.g.alchemy.com/v2/demo';
+    case 'arbitrum': return 'https://arb-mainnet.g.alchemy.com/v2/demo';
+    case 'optimism': return 'https://opt-mainnet.g.alchemy.com/v2/demo';
+    case 'polygon': return 'https://polygon-mainnet.g.alchemy.com/v2/demo';
+    default: return 'https://eth-mainnet.g.alchemy.com/v2/demo';
+  }
+};
+
+// Create public clients for different chains
+export const publicClient = createPublicClient({
+  chain: mainnet,
+  transport: http(getRpcUrl('mainnet'))
+});
+
+export const sepoliaClient = createPublicClient({
+  chain: sepolia,
+  transport: http(getRpcUrl('sepolia'))
+});
+
+export const arbitrumClient = createPublicClient({
+  chain: arbitrum,
+  transport: http(getRpcUrl('arbitrum'))
+});
+
+export const polygonClient = createPublicClient({
+  chain: polygon,
+  transport: http(getRpcUrl('polygon'))
+});
+
+export const getClientForChain = (chainId: number) => {
+  switch (chainId) {
+    case 1: return publicClient;
+    case 11155111: return sepoliaClient;
+    case 42161: return arbitrumClient;
+    case 137: return polygonClient;
+    default: return publicClient;
+  }
+}; 
+
+================================================================================
+File: lib/blockchain/token-registry.ts
+================================================================================
+
+import { createPublicClient, http, getContract, PublicClient } from 'viem';
+import { mainnet, sepolia, optimism, arbitrum } from 'viem/chains';
+import { erc20Abi } from './abis/erc20-abi';
+import { walletService, TransactionOptions } from './wallet-integration';
+import { parseAbi, encodeFunctionData } from 'viem';
+
+// Token information interface
+export interface TokenInfo {
+  address: `0x${string}`;
+  chainId: number;
+  name: string;
+  symbol: string;
+  decimals: number;
+  logoURI?: string;
+  isVerified?: boolean;
+}
+
+// Chain configuration
+interface ChainConfig {
+  chainId: number;
+  client: PublicClient;
+}
+
+// Common ERC20 ABI functions
+const ERC20_ABI = parseAbi([
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function totalSupply() view returns (uint256)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function transfer(address to, uint256 value) returns (bool)',
+  'function approve(address spender, uint256 value) returns (bool)',
+  'function transferFrom(address from, address to, uint256 value) returns (bool)'
+]);
+
+export class TokenRegistry {
+  private tokens: Map<string, TokenInfo> = new Map();
+  private chains: Map<number, ChainConfig> = new Map();
+  
+  constructor() {
+    // Initialize supported chains
+    this.initializeChains();
+  }
+  
+  private initializeChains(): void {
+    // Mainnet
+    this.chains.set(1, {
+      chainId: 1,
+      client: createPublicClient({
+        chain: mainnet,
+        transport: http()
+      })
+    });
+    
+    // Sepolia (Ethereum testnet)
+    this.chains.set(11155111, {
+      chainId: 11155111,
+      client: createPublicClient({
+        chain: sepolia,
+        transport: http()
+      })
+    });
+    
+    // Optimism
+    this.chains.set(10, {
+      chainId: 10,
+      client: createPublicClient({
+        chain: optimism,
+        transport: http()
+      })
+    });
+    
+    // Arbitrum
+    this.chains.set(42161, {
+      chainId: 42161,
+      client: createPublicClient({
+        chain: arbitrum,
+        transport: http()
+      })
+    });
+  }
+  
+  // Get token key (chainId + address)
+  private getTokenKey(address: `0x${string}`, chainId: number): string {
+    return `${chainId}-${address.toLowerCase()}`;
+  }
+  
+  // Add token to registry
+  addToken(token: TokenInfo): void {
+    const key = this.getTokenKey(token.address, token.chainId);
+    this.tokens.set(key, token);
+  }
+  
+  // Get token from registry
+  getToken(address: `0x${string}`, chainId: number): TokenInfo | undefined {
+    const key = this.getTokenKey(address, chainId);
+    return this.tokens.get(key);
+  }
+  
+  // Load token info from blockchain
+  async loadTokenInfo(address: `0x${string}`, chainId: number): Promise<TokenInfo> {
+    // Check if chain is supported
+    const chainConfig = this.chains.get(chainId);
+    if (!chainConfig) {
+      throw new Error(`Chain ID ${chainId} is not supported`);
+    }
+    
+    try {
+      // Create contract instance
+      const contract = getContract({
+        address,
+        abi: erc20Abi,
+        publicClient: chainConfig.client
+      });
+      
+      // Get token info
+      const [name, symbol, decimals] = await Promise.all([
+        contract.read.name(),
+        contract.read.symbol(),
+        contract.read.decimals()
+      ]);
+      
+      // Create token info
+      const tokenInfo: TokenInfo = {
+        address,
+        chainId,
+        name: name as string,
+        symbol: symbol as string,
+        decimals: Number(decimals),
+        isVerified: false
+      };
+      
+      // Add to registry
+      this.addToken(tokenInfo);
+      
+      return tokenInfo;
+    } catch (error) {
+      console.error('Error loading token info:', error);
+      throw new Error(`Failed to load token info for ${address} on chain ${chainId}`);
+    }
+  }
+  
+  // Get all tokens
+  getAllTokens(): TokenInfo[] {
+    return Array.from(this.tokens.values());
+  }
+  
+  // Get tokens by chain
+  getTokensByChain(chainId: number): TokenInfo[] {
+    return this.getAllTokens().filter(token => token.chainId === chainId);
+  }
+  
+  // Check if token exists
+  hasToken(address: `0x${string}`, chainId: number): boolean {
+    const key = this.getTokenKey(address, chainId);
+    return this.tokens.has(key);
+  }
+  
+  // Remove token from registry
+  removeToken(address: `0x${string}`, chainId: number): boolean {
+    const key = this.getTokenKey(address, chainId);
+    return this.tokens.delete(key);
+  }
+  
+  // Clear registry
+  clearRegistry(): void {
+    this.tokens.clear();
+  }
+  
+  // Get token balance
+  async getBalance(tokenAddress: `0x${string}`, ownerAddress: `0x${string}`, chainId: number): Promise<bigint> {
+    const chainConfig = this.chains.get(chainId);
+    if (!chainConfig) {
+      throw new Error(`Chain ID ${chainId} is not supported`);
+    }
+    
+    const balance = await chainConfig.client.readContract({
+      address: tokenAddress,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [ownerAddress]
+    });
+    
+    return balance as bigint;
+  }
+  
+  // Transfer tokens
+  async transfer(
+    tokenAddress: `0x${string}`, 
+    to: `0x${string}`, 
+    amount: bigint, 
+    chainId: number
+  ): Promise<`0x${string}`> {
+    if (!walletService.isConnected()) {
+      throw new Error('Wallet not connected');
+    }
+    
+    // Encode the transfer function call
+    const data = encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: 'transfer',
+      args: [to, amount]
+    });
+    
+    // Create transaction options
+    const txOptions: TransactionOptions = {
+      to: tokenAddress,
+      data,
+      value: 0n
+    };
+    
+    // Send the transaction
+    return walletService.sendTransaction(txOptions);
+  }
+  
+  // Approve token spending
+  async approve(
+    tokenAddress: `0x${string}`, 
+    spender: `0x${string}`, 
+    amount: bigint, 
+    chainId: number
+  ): Promise<`0x${string}`> {
+    if (!walletService.isConnected()) {
+      throw new Error('Wallet not connected');
+    }
+    
+    // Encode the approve function call
+    const data = encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [spender, amount]
+    });
+    
+    // Create transaction options
+    const txOptions: TransactionOptions = {
+      to: tokenAddress,
+      data,
+      value: 0n
+    };
+    
+    // Send the transaction
+    return walletService.sendTransaction(txOptions);
+  }
+  
+  // Get token allowance
+  async getAllowance(
+    tokenAddress: `0x${string}`,
+    ownerAddress: `0x${string}`,
+    spenderAddress: `0x${string}`,
+    chainId: number
+  ): Promise<bigint> {
+    const chainConfig = this.chains.get(chainId);
+    if (!chainConfig) {
+      throw new Error(`Chain ID ${chainId} is not supported`);
+    }
+    
+    const allowance = await chainConfig.client.readContract({
+      address: tokenAddress,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [ownerAddress, spenderAddress]
+    });
+    
+    return allowance as bigint;
+  }
+}
+
+// Export singleton instance
+export const tokenRegistry = new TokenRegistry();
+
+// Common tokens
+const COMMON_TOKENS: TokenInfo[] = [
+  {
+    address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' as `0x${string}`,
+    name: 'Wrapped Ether',
+    symbol: 'WETH',
+    decimals: 18,
+    chainId: 1,
+    logoURI: 'https://assets.coingecko.com/coins/images/2518/thumb/weth.png'
+  },
+  {
+    address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as `0x${string}`,
+    name: 'USD Coin',
+    symbol: 'USDC',
+    decimals: 6,
+    chainId: 1,
+    logoURI: 'https://assets.coingecko.com/coins/images/6319/thumb/USD_Coin_icon.png'
+  },
+  {
+    address: '0xdAC17F958D2ee523a2206206994597C13D831ec7' as `0x${string}`,
+    name: 'Tether',
+    symbol: 'USDT',
+    decimals: 6,
+    chainId: 1,
+    logoURI: 'https://assets.coingecko.com/coins/images/325/thumb/Tether.png'
+  }
+];
+
+// Initialize common tokens
+COMMON_TOKENS.forEach(token => tokenRegistry.addToken(token)); 
+
+================================================================================
+File: lib/blockchain/wallet-integration.ts
+================================================================================
+
+import { createWalletClient, http, custom, parseEther, parseGwei } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { mainnet, sepolia, arbitrum } from 'viem/chains';
+import { publicClient } from './providers';
+
+// Supported wallet types
+export type WalletType = 'metamask' | 'walletconnect' | 'private-key' | 'hardware';
+
+// Wallet connection options
+export interface WalletConnectionOptions {
+  type: WalletType;
+  chainId?: number;
+  privateKey?: string;
+  rpcUrl?: string;
+}
+
+// Transaction options 
+export interface TransactionOptions {
+  to: `0x${string}`;
+  value?: bigint;
+  data?: `0x${string}`;
+  gasLimit?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+  nonce?: number;
+}
+
+export class WalletIntegrationService {
+  private walletClient: any = null;
+  private connectedChainId: number | null = null;
+  private connectedAddress: `0x${string}` | null = null;
+  private pendingTransactions = new Map<string, any>();
+
+  // Connect to a wallet
+  async connect(options: WalletConnectionOptions): Promise<`0x${string}`> {
+    try {
+      const chainId = options.chainId || 1; // Default to Ethereum mainnet
+      let chain;
+      
+      // Determine the chain
+      switch (chainId) {
+        case 1:
+          chain = mainnet;
+          break;
+        case 11155111:
+          chain = sepolia;
+          break;
+        case 42161:
+          chain = arbitrum;
+          break;
+        default:
+          throw new Error(`Chain ID ${chainId} not supported`);
+      }
+
+      // Connect based on wallet type
+      switch (options.type) {
+        case 'metamask':
+          if (typeof window === 'undefined' || !window.ethereum) {
+            throw new Error('MetaMask not detected in browser');
+          }
+          
+          this.walletClient = createWalletClient({
+            chain,
+            transport: custom(window.ethereum)
+          });
+          
+          // Request accounts
+          const accounts = await this.walletClient.requestAddresses();
+          if (!accounts || accounts.length === 0) {
+            throw new Error('No accounts found in MetaMask');
+          }
+          
+          this.connectedAddress = accounts[0];
+          break;
+          
+        case 'private-key':
+          if (!options.privateKey) {
+            throw new Error('Private key is required');
+          }
+          
+          // Create account from private key
+          const account = privateKeyToAccount(options.privateKey as `0x${string}`);
+          
+          this.walletClient = createWalletClient({
+            account,
+            chain,
+            transport: http(options.rpcUrl || 'https://eth-mainnet.g.alchemy.com/v2/demo')
+          });
+          
+          this.connectedAddress = account.address;
+          break;
+          
+        case 'walletconnect':
+          throw new Error('WalletConnect integration not implemented yet');
+          
+        case 'hardware':
+          throw new Error('Hardware wallet integration not implemented yet');
+          
+        default:
+          throw new Error(`Wallet type ${options.type} not supported`);
+      }
+
+      this.connectedChainId = chainId;
+      
+      console.log(`Wallet connected: ${this.connectedAddress} on chain ${chainId}`);
+      return this.connectedAddress;
+      
+    } catch (error) {
+      console.error('Wallet connection error:', error);
+      throw new Error(`Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Check if wallet is connected
+  isConnected(): boolean {
+    return this.walletClient !== null && this.connectedAddress !== null;
+  }
+
+  // Get connected address
+  getAddress(): `0x${string}` {
+    if (!this.isConnected()) {
+      throw new Error('Wallet not connected');
+    }
+    return this.connectedAddress!;
+  }
+
+  // Send a transaction
+  async sendTransaction(options: TransactionOptions): Promise<`0x${string}`> {
+    if (!this.isConnected()) {
+      throw new Error('Wallet not connected');
+    }
+
+    try {
+      // If gas parameters aren't provided, estimate them
+      if (!options.maxFeePerGas || !options.maxPriorityFeePerGas) {
+        const feeData = await publicClient.estimateFeesPerGas();
+        options.maxFeePerGas = options.maxFeePerGas || feeData.maxFeePerGas;
+        options.maxPriorityFeePerGas = options.maxPriorityFeePerGas || feeData.maxPriorityFeePerGas;
+      }
+
+      // If gas limit isn't provided, estimate it
+      if (!options.gasLimit) {
+        const gasLimit = await publicClient.estimateGas({
+          account: this.connectedAddress!,
+          to: options.to,
+          value: options.value || 0n,
+          data: options.data
+        });
+        
+        // Add a 20% buffer to the gas limit to be safe
+        options.gasLimit = (gasLimit * 120n) / 100n;
+      }
+
+      // If nonce isn't provided, get the next nonce
+      if (options.nonce === undefined) {
+        options.nonce = await publicClient.getTransactionCount({
+          address: this.connectedAddress!
+        });
+      }
+
+      // Send the transaction
+      const hash = await this.walletClient.sendTransaction({
+        account: this.walletClient.account || this.connectedAddress!,
+        to: options.to,
+        value: options.value || 0n,
+        data: options.data,
+        gasLimit: options.gasLimit,
+        maxFeePerGas: options.maxFeePerGas,
+        maxPriorityFeePerGas: options.maxPriorityFeePerGas,
+        nonce: options.nonce
+      });
+
+      // Store the pending transaction
+      this.pendingTransactions.set(hash, {
+        ...options,
+        hash,
+        timestamp: Date.now(),
+        status: 'pending'
+      });
+
+      return hash;
+    } catch (error) {
+      console.error('Transaction error:', error);
+      throw new Error(`Failed to send transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Wait for transaction confirmation
+  async waitForTransaction(hash: `0x${string}`, confirmations = 1): Promise<any> {
+    try {
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations
+      });
+
+      // Update the transaction status
+      if (this.pendingTransactions.has(hash)) {
+        const tx = this.pendingTransactions.get(hash);
+        this.pendingTransactions.set(hash, {
+          ...tx,
+          status: receipt.status === 'success' ? 'confirmed' : 'failed',
+          receipt
+        });
+      }
+
+      return receipt;
+    } catch (error) {
+      console.error('Transaction confirmation error:', error);
+      
+      // Update the transaction status to failed
+      if (this.pendingTransactions.has(hash)) {
+        const tx = this.pendingTransactions.get(hash);
+        this.pendingTransactions.set(hash, {
+          ...tx,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+      
+      throw error;
+    }
+  }
+
+  // Get pending transactions
+  getPendingTransactions(): any[] {
+    return Array.from(this.pendingTransactions.values()).filter(tx => tx.status === 'pending');
+  }
+
+  // Get transaction by hash
+  getTransaction(hash: `0x${string}`): any {
+    return this.pendingTransactions.get(hash);
+  }
+
+  // Disconnect wallet
+  disconnect(): void {
+    this.walletClient = null;
+    this.connectedAddress = null;
+    this.connectedChainId = null;
+    console.log('Wallet disconnected');
+  }
+
+  // Helper function to convert ETH string to wei BigInt
+  static parseEther(amount: string): bigint {
+    return parseEther(amount);
+  }
+
+  // Helper function to convert Gwei string to wei BigInt
+  static parseGwei(amount: string): bigint {
+    return parseGwei(amount);
+  }
+}
+
+// Export singleton instance
+export const walletService = new WalletIntegrationService(); 
+
+================================================================================
 File: lib/conversation-store.ts
 ================================================================================
 
@@ -2428,6 +4892,7 @@ export interface ChatMessage {
     contextualHints?: string[];
     followUp?: boolean;
     referenceMessageId?: string;
+    contextConfidence?: number;
   };
   id: string;
 }
@@ -2712,7 +5177,7 @@ File: lib/conversation/context-builder.ts
 ================================================================================
 
 import { ChatMessage, ConversationStore } from '../conversation-store';
-import { RobustAnalysis } from '../agents/types';
+import { RobustAnalysis, IntentType } from '../agents/types';
 
 export interface EnhancedContext {
   recentMessages: ChatMessage[];
@@ -2838,7 +5303,9 @@ export function analyzeContextContinuity(context: EnhancedContext): {
 
   // Check if current query follows conversation flow
   const isRelatedToRecent = recentIntents.includes(currentIntent) ||
-    context.currentQuery.relatedTopics.some(topic => recentIntents.includes(topic));
+    context.currentQuery.relatedTopics.some(topic => 
+      recentIntents.includes(topic as IntentType)
+    );
 
   // Calculate confidence based on multiple factors
   const intentConfidence = context.currentQuery.analysis.classification.confidence;
@@ -3254,14 +5721,17 @@ function validateEnv(): EnvConfig {
     varName => !process.env[varName]
   );
 
-  if (missingVars.length > 0) {
+  // In development mode, use placeholder values for missing variables
+  const isDev = process.env.NODE_ENV === 'development';
+  
+  if (missingVars.length > 0 && !isDev) {
     throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
   }
 
   return {
-    COINGECKO_API_KEY: process.env.COINGECKO_API_KEY!,
-    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY!,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+    COINGECKO_API_KEY: process.env.COINGECKO_API_KEY || (isDev ? 'development_key' : ''),
+    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY || (isDev ? 'development_key' : ''),
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || (isDev ? 'development_key' : ''),
     NODE_ENV: process.env.NODE_ENV || 'development',
     API_RATE_LIMITS: {
       COINGECKO: parseInt(process.env.COINGECKO_RATE_LIMIT || '50'),
@@ -3585,7 +6055,7 @@ File: lib/middleware.ts
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { verifyToken, type UserRole } from './auth';
+import { verifyToken, type UserRole, type AuthenticatedUser } from './auth';
 
 export function withAuth(handler: Function, requiredRole?: UserRole) {
   return async function (req: NextRequest) {
@@ -3613,10 +6083,8 @@ export function withAuth(handler: Function, requiredRole?: UserRole) {
       );
     }
 
-    // Add user to request context
-    req.user = user;
-    
-    return handler(req);
+    // Pass the user to the handler function instead of modifying the request
+    return handler(req, user);
   };
 }
 
@@ -3630,7 +6098,8 @@ import {
   executeAggregatorCalls,
   generateSummary,
   RobustAnalysis,
-  OrchestrationResult 
+  OrchestrationResult,
+  AggregatorResult
 } from './agents';
 import { ConversationStore, ChatMessage } from './conversation-store';
 import { buildEnhancedContext, formatContextForPrompt, analyzeContextContinuity } from './conversation/context-builder';
@@ -3780,7 +6249,7 @@ export class AgentOrchestrator {
         }
       });
 
-      let aggregatorData = null;
+      let aggregatorData: AggregatorResult | null = null;
       let response: string;
 
       // Step 3: Process based on intent and context with retry
@@ -4082,13 +6551,29 @@ export interface TokenInfo {
   source: 'coingecko' | 'coinmarketcap';
 }
 
+export interface TokenTrend {
+  item: {
+    id: string;
+    coin_id: number;
+    name: string;
+    symbol: string;
+    market_cap_rank: number;
+    thumb: string;
+    small: string;
+    large: string;
+    slug: string;
+    price_btc: number;
+    score: number;
+  };
+}
+
 async function fetchCoinGecko(endpoint: string): Promise<Response> {
   const response = await fetch(
     `${getApiBaseUrl('COINGECKO')}${endpoint}`,
     {
       headers: {
-        'Accept': 'application/json',
-        'X-CoinGecko-API-KEY': getApiKey('COINGECKO')
+        'x-cg-pro-api-key': getApiKey('COINGECKO'),
+        'Accept': 'application/json'
       }
     }
   );
@@ -4129,6 +6614,50 @@ async function fetchCoinMarketCap(endpoint: string): Promise<any> {
   return data.data;
 }
 
+export async function getTrendingTokens(): Promise<TokenTrend[]> {
+  try {
+    if (canCallCoinGecko()) {
+      const response = await fetchCoinGecko('/search/trending');
+      const data = await response.json();
+      recordCoinGeckoCall();
+      
+      if (data?.coins) {
+        return data.coins;
+      }
+    }
+    
+    // Fallback to CoinMarketCap trending
+    if (canCallCoinMarketCap()) {
+      const data = await fetchCoinMarketCap('/cryptocurrency/trending/latest');
+      recordCoinMarketCapCall();
+      
+      if (data) {
+        // Transform to match CoinGecko format
+        return data.map((coin: any) => ({
+          item: {
+            id: coin.slug,
+            coin_id: coin.id,
+            name: coin.name,
+            symbol: coin.symbol,
+            market_cap_rank: coin.cmc_rank,
+            thumb: coin.logo || '',
+            small: coin.logo || '',
+            large: coin.logo || '',
+            slug: coin.slug,
+            price_btc: coin.quote?.BTC?.price || 0,
+            score: 0
+          }
+        }));
+      }
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Error fetching trending tokens:', error);
+    return [];
+  }
+}
+
 async function searchToken(query: string): Promise<{id: string, symbol: string, name: string} | null> {
   if (!query?.trim()) {
     throw new Error('Search query is required');
@@ -4146,13 +6675,36 @@ async function searchToken(query: string): Promise<{id: string, symbol: string, 
         if (data.coins?.length > 0) {
           // Find best match based on exact symbol/name match or highest market cap rank
           const exactSymbolMatch = data.coins.find(
-            coin => coin.symbol.toLowerCase() === query.toLowerCase()
+            (coin: { symbol: string }) => coin.symbol.toLowerCase() === query.toLowerCase()
           );
+          
+          if (exactSymbolMatch) {
+            recordCoinGeckoCall();
+            return {
+              id: exactSymbolMatch.id,
+              symbol: exactSymbolMatch.symbol.toLowerCase(),
+              name: exactSymbolMatch.name
+            };
+          }
+          
           const exactNameMatch = data.coins.find(
-            coin => coin.name.toLowerCase() === query.toLowerCase()
+            (coin: { name: string }) => coin.name.toLowerCase() === query.toLowerCase()
           );
-          const bestMatch = exactSymbolMatch || exactNameMatch || data.coins[0];
-
+          
+          if (exactNameMatch) {
+            recordCoinGeckoCall();
+            return {
+              id: exactNameMatch.id,
+              symbol: exactNameMatch.symbol.toLowerCase(),
+              name: exactNameMatch.name
+            };
+          }
+          
+          // Otherwise return the highest ranked result
+          const bestMatch = data.coins.reduce((best: any, current: any) => {
+            return (current.market_cap_rank < best.market_cap_rank) ? current : best;
+          }, data.coins[0]);
+          
           recordCoinGeckoCall();
           return {
             id: bestMatch.id,
@@ -4164,38 +6716,19 @@ async function searchToken(query: string): Promise<{id: string, symbol: string, 
         console.warn('CoinGecko search failed:', error);
       }
     }
-
+    
     // Fallback to CoinMarketCap
     if (canCallCoinMarketCap()) {
       try {
-        // First try exact symbol match
-        const symbolResponse = await fetchCoinMarketCap(
-          `/cryptocurrency/map?symbol=${encodeURIComponent(query.toUpperCase())}`
+        const data = await fetchCoinMarketCap(
+          `/cryptocurrency/map?symbol=${encodeURIComponent(query)}`
         );
-
-        if (symbolResponse?.length > 0) {
-          recordCoinMarketCapCall();
-          const bestMatch = symbolResponse[0];
-          return {
-            id: bestMatch.id.toString(),
-            symbol: bestMatch.symbol.toLowerCase(),
-            name: bestMatch.name
-          };
-        }
-
-        // If no exact match, try keyword search
-        const searchResponse = await fetchCoinMarketCap(
-          `/cryptocurrency/map?keyword=${encodeURIComponent(query)}`
-        );
-
-        if (searchResponse?.length > 0) {
-          recordCoinMarketCapCall();
-          // Sort by rank to get most relevant result
-          const sortedResults = searchResponse.sort((a: any, b: any) => 
-            (a.rank || Infinity) - (b.rank || Infinity)
-          );
+        
+        if (data?.length > 0) {
+          // Sort by rank and take the best match
+          const bestMatch = data.sort((a: any, b: any) => a.rank - b.rank)[0];
           
-          const bestMatch = sortedResults[0];
+          recordCoinMarketCapCall();
           return {
             id: bestMatch.id.toString(),
             symbol: bestMatch.symbol.toLowerCase(),
@@ -4248,6 +6781,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
         const data = await response.json();
         if (data?.market_data) {
           recordCoinGeckoCall();
+          
           return {
             id: data.id,
             symbol: data.symbol,
@@ -4256,15 +6790,15 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
             market_cap: data.market_data.market_cap.usd,
             market_cap_rank: data.market_cap_rank,
             total_volume: data.market_data.total_volume.usd,
-            high_24h: data.market_data.high_24h.usd,
-            low_24h: data.market_data.low_24h.usd,
-            price_change_24h: data.market_data.price_change_24h,
-            price_change_percentage_24h: data.market_data.price_change_percentage_24h,
+            high_24h: data.market_data.high_24h?.usd || null,
+            low_24h: data.market_data.low_24h?.usd || null,
+            price_change_24h: data.market_data.price_change_24h || 0,
+            price_change_percentage_24h: data.market_data.price_change_percentage_24h || 0,
             circulating_supply: data.market_data.circulating_supply,
             total_supply: data.market_data.total_supply,
             max_supply: data.market_data.max_supply,
-            ath: data.market_data.ath.usd,
-            ath_date: data.market_data.ath_date.usd,
+            ath: data.market_data.ath?.usd || null,
+            ath_date: data.market_data.ath_date?.usd || null,
             source: 'coingecko'
           };
         }
@@ -4272,34 +6806,35 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
         console.warn('CoinGecko details fetch failed:', error);
       }
     }
-
+    
     // Fallback to CoinMarketCap
     if (canCallCoinMarketCap()) {
       try {
-        const tokenData = await fetchCoinMarketCap(
-          `/cryptocurrency/quotes/latest?id=${tokenMatch.id}`
+        const data = await fetchCoinMarketCap(
+          `/cryptocurrency/quotes/latest?symbol=${tokenMatch.symbol}`
         );
-
-        if (tokenData?.[tokenMatch.id]) {
+        
+        if (data && data[tokenMatch.symbol]) {
+          const coinData = data[tokenMatch.symbol][0];
+          const quote = coinData.quote.USD;
+          
           recordCoinMarketCapCall();
-          const data = tokenData[tokenMatch.id];
-          const quote = data.quote.USD;
           
           return {
-            id: tokenMatch.id,
-            symbol: tokenMatch.symbol,
-            name: tokenMatch.name,
+            id: coinData.slug,
+            symbol: coinData.symbol.toLowerCase(),
+            name: coinData.name,
             current_price: quote.price,
             market_cap: quote.market_cap,
-            market_cap_rank: data.cmc_rank,
+            market_cap_rank: coinData.cmc_rank,
             total_volume: quote.volume_24h,
-            high_24h: null,
-            low_24h: null,
-            price_change_24h: quote.percent_change_24h * quote.price / 100,
-            price_change_percentage_24h: quote.percent_change_24h,
-            circulating_supply: data.circulating_supply,
-            total_supply: data.total_supply,
-            max_supply: data.max_supply,
+            high_24h: null, // Not available in this endpoint
+            low_24h: null, // Not available in this endpoint
+            price_change_24h: quote.volume_change_24h || 0,
+            price_change_percentage_24h: quote.percent_change_24h || 0,
+            circulating_supply: coinData.circulating_supply,
+            total_supply: coinData.total_supply,
+            max_supply: coinData.max_supply,
             ath: null,
             ath_date: null,
             source: 'coinmarketcap'
@@ -4403,7 +6938,7 @@ import { mainnet } from 'wagmi/chains';
 import { injected } from 'wagmi/connectors';
 import { createPublicClient, fallback, http as viemHttp } from 'viem';
 
-const publicClient = createPublicClient({
+export const publicClient = createPublicClient({
   chain: mainnet,
   transport: fallback([
     viemHttp(),
@@ -4419,7 +6954,6 @@ export const config = createConfig({
   transports: {
     [mainnet.id]: http(),
   },
-  publicClient,
 });
 
 ================================================================================
@@ -4500,6 +7034,7 @@ File: package.json
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",
+    "@openzeppelin/contracts": "^5.2.0",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-alert-dialog": "^1.0.5",
     "@radix-ui/react-aspect-ratio": "^1.0.3",
@@ -4534,27 +7069,38 @@ File: package.json
     "@types/react-dom": "^18.2.19",
     "@types/uuid": "^9.0.8",
     "autoprefixer": "^10.4.17",
+    "axios": "^1.8.2",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "cmdk": "^1.0.4",
     "date-fns": "^3.3.1",
+    "embla-carousel-react": "^8.5.2",
+    "ethers": "^6.13.5",
     "graphql": "^16.8.1",
     "graphql-request": "^6.1.0",
+    "input-otp": "^1.4.2",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.341.0",
     "next": "14.1.0",
+    "next-themes": "^0.4.4",
     "openai": "^3.3.0",
     "pino-pretty": "^10.3.1",
     "postcss": "^8.4.35",
     "react": "^18.2.0",
+    "react-day-picker": "^9.5.1",
     "react-dom": "^18.2.0",
+    "react-resizable-panels": "^2.1.7",
     "recharts": "^2.12.1",
+    "solc": "^0.8.28",
+    "sonner": "^2.0.1",
     "tailwind-merge": "^2.2.1",
     "tailwindcss": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",
     "uuid": "^9.0.1",
-    "viem": "^2.7.13",
+    "vaul": "^1.1.2",
+    "viem": "^2.23.7",
     "wagmi": "^2.5.7",
     "zod": "^3.22.4"
   },
@@ -4565,6 +7111,7 @@ File: package.json
     "@types/jsonwebtoken": "^9.0.5"
   }
 }
+
 
 ================================================================================
 File: supabase/migrations/20250125030838_broad_tree.sql
@@ -4749,8 +7296,8 @@ File: tsconfig.json
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
@@ -4763,7 +7310,8 @@ File: tsconfig.json
     "paths": {
       "@/*": ["./*"]
     },
-    "baseUrl": "."
+    "baseUrl": ".",
+    "typeRoots": ["./node_modules/@types", "./types"]
   },
   "ts-node": {
     "esm": true,
@@ -4774,7 +7322,8 @@ File: tsconfig.json
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "types/**/*.d.ts"
   ],
   "exclude": ["node_modules"]
 }

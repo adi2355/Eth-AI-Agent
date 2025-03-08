@@ -1,0 +1,570 @@
+
+
+================================================================================
+File: collect-code.js
+================================================================================
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const DEFAULT_CONFIG = {
+  extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.sql'],
+  excludeDirs: [
+    'node_modules',
+    '.git',
+    'dist',
+    '.next',
+    'coverage',
+    'tests',
+    'scripts',
+    'components/ui',
+  ],
+  excludeFiles: [
+    '.test.',
+    '.spec.',
+    '.d.ts',
+    '.map',
+    'next-env.d.ts',
+    '.gitignore',
+    '.eslintrc.json',
+    '.env.example',
+    'components.json',
+    'package-lock.json',
+  ],
+  excludePaths: [
+    'lib/supabase.ts',
+    'lib/rate-limit.ts',
+    'lib/monitoring.ts',
+    'lib/cache.ts',
+    'lib/auth.ts',
+    'scripts/test-agent1.ts',
+    'scripts/test-agent2.ts',
+    'scripts/test-agent3.ts',
+    'scripts/test-orchestrator.ts',
+    'lib/graphql/queries.ts',
+    'lib/graphql/client.ts',
+    'hooks/use-toast.ts',
+    'components/WalletConnect.tsx',
+    'components/Learn.tsx',
+    'components/ContractInteraction.tsx',
+    'components/Analytics.tsx',
+    'app/providers.tsx',
+    'app/page.tsx',
+    'app/globals.css',
+    'app/layout.tsx',
+  ],
+  maxFileSize: 1024 * 1024, // 1MB
+};
+
+function getRelativePath(fullPath, rootDir) {
+  return path.relative(rootDir, fullPath);
+}
+
+function shouldExcludeFile(filePath, config) {
+  const normalizedPath = path.normalize(filePath);
+
+  if (config.excludeFiles.some((pattern) => normalizedPath.includes(pattern))) {
+    return true;
+  }
+
+  if (config.excludePaths.some((excludePath) =>
+    normalizedPath.includes(path.normalize(excludePath))
+  )) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldExcludeDir(dirPath, config) {
+  const normalizedPath = path.normalize(dirPath);
+  return config.excludeDirs.some((excludeDir) =>
+    normalizedPath.includes(path.normalize(excludeDir))
+  );
+}
+
+function collectFiles(dir, rootDir, config) {
+  let results = [];
+  const items = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const item of items) {
+    const fullPath = path.join(dir, item.name);
+    const relativePath = getRelativePath(fullPath, rootDir);
+
+    if (item.isDirectory()) {
+      if (!shouldExcludeDir(fullPath, config)) {
+        results = results.concat(collectFiles(fullPath, rootDir, config));
+      }
+    } else {
+      const ext = path.extname(item.name).toLowerCase();
+
+      if (config.extensions.includes(ext) && !shouldExcludeFile(relativePath, config)) {
+        const stats = fs.statSync(fullPath);
+        if (stats.size <= config.maxFileSize) {
+          results.push({ path: fullPath, relativePath });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+function collectCode(outputFile, customConfig = {}) {
+  const config = { ...DEFAULT_CONFIG, ...customConfig };
+
+  try {
+    fs.writeFileSync(outputFile, '');
+
+    const rootDir = process.cwd();
+    console.log(`Processing project directory: ${rootDir}`);
+    const files = collectFiles(rootDir, rootDir, config);
+
+    files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+    files.forEach(({ path: filePath, relativePath }) => {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const separator = '='.repeat(80);
+      fs.appendFileSync(
+        outputFile,
+        `\n\n${separator}\nFile: ${relativePath}\n${separator}\n\n${content}`
+      );
+    });
+
+    console.log('Collection complete!');
+  } catch (error) {
+    console.error('Error during collection:', error);
+    process.exit(1);
+  }
+}
+
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  const outputFile = process.argv[2] || 'code-collection.txt';
+  collectCode(outputFile);
+}
+
+export { collectCode };
+
+================================================================================
+File: collect-code.ts
+================================================================================
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+interface Config {
+  extensions: string[];
+  excludeDirs: string[];
+  excludeFiles: string[];
+  excludePaths: string[];
+  maxFileSize: number;
+}
+
+interface FileInfo {
+  path: string;
+  relativePath: string;
+}
+
+const DEFAULT_CONFIG: Config = {
+  extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.sql'],
+  excludeDirs: [
+    'node_modules',
+    '.git',
+    'dist',
+    '.next',
+    'coverage',
+    'tests',
+    'scripts',
+    'components/ui',
+  ],
+  excludeFiles: [
+    '.test.',
+    '.spec.',
+    '.d.ts',
+    '.map',
+    'next-env.d.ts',
+    '.gitignore',
+    '.eslintrc.json',
+    '.env.example',
+    'components.json',
+    'package-lock.json',
+  ],
+  excludePaths: [
+    'lib/supabase.ts',
+    'lib/rate-limit.ts',
+    'lib/monitoring.ts',
+    'lib/cache.ts',
+    'lib/auth.ts',
+    'scripts/test-agent1.ts',
+    'scripts/test-agent2.ts',
+    'scripts/test-agent3.ts',
+    'scripts/test-orchestrator.ts',
+    'lib/graphql/queries.ts',
+    'lib/graphql/client.ts',
+    'hooks/use-toast.ts',
+    'components/WalletConnect.tsx',
+    'components/Learn.tsx',
+    'components/ContractInteraction.tsx',
+    'components/Analytics.tsx',
+    'app/providers.tsx',
+    'app/page.tsx',
+    'app/globals.css',
+    'app/layout.tsx',
+  ],
+  maxFileSize: 1024 * 1024, // 1MB
+};
+
+function getRelativePath(fullPath: string, rootDir: string): string {
+  return path.relative(rootDir, fullPath);
+}
+
+function shouldExcludeFile(filePath: string, config: Config): boolean {
+  const normalizedPath = path.normalize(filePath);
+
+  if (config.excludeFiles.some((pattern) => normalizedPath.includes(pattern))) {
+    return true;
+  }
+
+  if (config.excludePaths.some((excludePath) =>
+    normalizedPath.includes(path.normalize(excludePath))
+  )) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldExcludeDir(dirPath: string, config: Config): boolean {
+  const normalizedPath = path.normalize(dirPath);
+  return config.excludeDirs.some((excludeDir) =>
+    normalizedPath.includes(path.normalize(excludeDir))
+  );
+}
+
+function collectFiles(dir: string, rootDir: string, config: Config): FileInfo[] {
+  let results: FileInfo[] = [];
+  const items = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const item of items) {
+    const fullPath = path.join(dir, item.name);
+    const relativePath = getRelativePath(fullPath, rootDir);
+
+    if (item.isDirectory()) {
+      if (!shouldExcludeDir(fullPath, config)) {
+        results = results.concat(collectFiles(fullPath, rootDir, config));
+      }
+    } else {
+      const ext = path.extname(item.name).toLowerCase();
+
+      if (config.extensions.includes(ext) && !shouldExcludeFile(relativePath, config)) {
+        const stats = fs.statSync(fullPath);
+        if (stats.size <= config.maxFileSize) {
+          results.push({ path: fullPath, relativePath });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+function collectCode(outputFile: string, customConfig: Partial<Config> = {}): void {
+  const config = { ...DEFAULT_CONFIG, ...customConfig };
+
+  try {
+    fs.writeFileSync(outputFile, '');
+
+    const rootDir = process.cwd();
+    console.log(`Processing project directory: ${rootDir}`);
+    const files = collectFiles(rootDir, rootDir, config);
+
+    files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+    files.forEach(({ path: filePath, relativePath }) => {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const separator = '='.repeat(80);
+      fs.appendFileSync(
+        outputFile,
+        `\n\n${separator}\nFile: ${relativePath}\n${separator}\n\n${content}`
+      );
+    });
+
+    console.log('Collection complete!');
+  } catch (error) {
+    console.error('Error during collection:', error);
+    process.exit(1);
+  }
+}
+
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  const outputFile = process.argv[2] || 'code-collection.txt';
+  collectCode(outputFile);
+}
+
+export { collectCode };
+
+
+================================================================================
+File: test-agent1.ts
+================================================================================
+
+import { analyzeUserQuery } from '@/lib/agents';
+
+const TEST_QUERIES = [
+  // Price queries
+  "What is the price of Bitcoin?",
+  "Show me ETH price",
+  "How much is BNB worth?",
+  
+  // Trending queries
+  "What coins are trending?",
+  "Show me popular tokens",
+  "Which cryptocurrencies are hot right now?",
+  
+  // Conceptual queries
+  "What is a gas fee?",
+  "How do smart contracts work?",
+  "Explain blockchain technology",
+  
+  // Edge cases
+  "shw me gud coins", // Malformed
+  "", // Empty
+  "price", // Ambiguous
+];
+
+async function runTests() {
+  console.log('🧪 Testing Agent #1 Query Analysis\n');
+  
+  for (const query of TEST_QUERIES) {
+    console.log(`Query: "${query}"`);
+    try {
+      if (!query) {
+        console.log('❌ Empty query - Skipping\n');
+        continue;
+      }
+      
+      const result = await analyzeUserQuery({ query });
+      console.log('Result:', JSON.stringify(result, null, 2));
+      
+      // Validate result structure
+      const isValid = 
+        typeof result.classification?.needsApiCall === 'boolean' &&
+        result.classification?.primaryIntent !== undefined;
+        
+      console.log(isValid ? '✅ Valid response' : '❌ Invalid response structure');
+    } catch (error) {
+      console.log('❌ Error:', error instanceof Error ? error.message : 'Unknown error');
+    }
+    console.log('\n---\n');
+  }
+}
+
+runTests().catch(console.error);
+
+================================================================================
+File: test-agent2.ts
+================================================================================
+
+import { analyzeUserQuery, buildAggregatorCalls, executeAggregatorCalls } from '../lib/agents/index.js';
+
+interface TestCase {
+  input: string;
+  expectedIntent: string;
+  expectedTokens: string[] | null;
+  shouldNeedApiCall: boolean;
+  expectedAggregator?: {
+    endpoints: string[];
+    params?: Record<string, any>;
+  };
+}
+
+const TEST_CASES: Record<string, TestCase[]> = {
+  price_queries: [
+    {
+      input: "What is the price of Bitcoin?",
+      expectedIntent: "MARKET_DATA",
+      expectedTokens: ["bitcoin"],
+      shouldNeedApiCall: true,
+      expectedAggregator: {
+        endpoints: ["/simple/price"],
+        params: { ids: ["bitcoin"], vs_currencies: "usd" }
+      }
+    },
+    {
+      input: "Show me ETH price",
+      expectedIntent: "MARKET_DATA",
+      expectedTokens: ["ethereum"],
+      shouldNeedApiCall: true
+    }
+  ],
+  
+  trending_queries: [
+    {
+      input: "What coins are trending?",
+      expectedIntent: "MARKET_DATA",
+      expectedTokens: null,
+      shouldNeedApiCall: true,
+      expectedAggregator: {
+        endpoints: ["/search/trending"]
+      }
+    }
+  ],
+  
+  hybrid_queries: [
+    {
+      input: "Compare ETH and BTC prices and technology",
+      expectedIntent: "HYBRID",
+      expectedTokens: ["ethereum", "bitcoin"],
+      shouldNeedApiCall: true
+    }
+  ],
+  
+  edge_cases: [
+    {
+      input: "what is luna???!!!",
+      expectedIntent: "NEEDS_CONTEXT",
+      expectedTokens: ["luna"],
+      shouldNeedApiCall: false
+    }
+  ]
+};
+
+function assertExpected(actual: any, expected: any, message: string) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+async function runTests() {
+  console.log('🧪 Starting Multi-Agent Pipeline Tests\n');
+  
+  let passCount = 0;
+  let failCount = 0;
+  const errors: Record<string, Error[]> = {};
+  
+  for (const [category, cases] of Object.entries(TEST_CASES)) {
+    console.log(`\nTesting category: ${category}`);
+    
+    for (const testCase of cases) {
+      try {
+        console.log(`\nQuery: "${testCase.input}"`);
+        
+        // Test Agent #1
+        const analysis = await analyzeUserQuery({ query: testCase.input });
+        
+        // Validate intent classification
+        assertExpected(analysis.classification.primaryIntent, testCase.expectedIntent, "Intent mismatch");
+        assertExpected(analysis.classification.needsApiCall, testCase.shouldNeedApiCall, "API call flag mismatch");
+        
+        if (testCase.expectedTokens) {
+          assertExpected(
+            analysis.queryAnalysis.detectedTokens.sort(),
+            testCase.expectedTokens.sort(),
+            "Tokens mismatch"
+          );
+        }
+        
+        // Only test Agent #2 if API call needed
+        if (testCase.shouldNeedApiCall) {
+          const aggregatorSpec = await buildAggregatorCalls(analysis);
+          
+          if (testCase.expectedAggregator) {
+            if (aggregatorSpec.primary?.coingecko) {
+              assertExpected(
+                [aggregatorSpec.primary.coingecko.endpoint],
+                testCase.expectedAggregator.endpoints,
+                "Endpoints mismatch"
+              );
+              
+              if (testCase.expectedAggregator.params) {
+                const hasAllParams = Object.entries(testCase.expectedAggregator.params)
+                  .every(([key, value]) => 
+                    JSON.stringify(aggregatorSpec.primary?.coingecko?.params?.[key]) === JSON.stringify(value)
+                  );
+                if (!hasAllParams) {
+                  throw new Error("Parameters mismatch");
+                }
+              }
+            }
+          }
+          
+          // Optional: Execute calls with mocking
+          if (process.env.EXECUTE_CALLS === 'true') {
+            const mockOptions = {
+              simulateRateLimit: false,
+              simulateTimeout: false
+            };
+            
+            const results = await executeAggregatorCalls(aggregatorSpec);
+            if (!results) {
+              throw new Error("No results returned from aggregator calls");
+            }
+          }
+        }
+        
+        console.log('✅ Passed');
+        passCount++;
+        
+      } catch (error) {
+        console.log('❌ Failed:', error instanceof Error ? error.message : 'Unknown error');
+        failCount++;
+        if (!errors[category]) errors[category] = [];
+        errors[category].push(error as Error);
+      }
+    }
+  }
+  
+  // Print summary
+  console.log('\n📊 Test Summary');
+  console.log(`Total: ${passCount + failCount}`);
+  console.log(`Passed: ${passCount}`);
+  console.log(`Failed: ${failCount}`);
+  
+  if (Object.keys(errors).length > 0) {
+    console.log('\n❌ Errors by category:');
+    for (const [category, categoryErrors] of Object.entries(errors)) {
+      console.log(`\n${category}:`);
+      categoryErrors.forEach(error => console.log(`  - ${error.message}`));
+    }
+  }
+}
+
+// Add error handling for the whole suite
+runTests().catch(error => {
+  console.error('❌ Test suite failed:', error);
+  process.exit(1);
+});
+
+================================================================================
+File: test-orchestrator.ts
+================================================================================
+
+import { AgentOrchestrator } from '../lib/orchestrator';
+
+async function testOrchestrator() {
+  const orchestrator = new AgentOrchestrator();
+  
+  const queries = [
+    "What is the price of Bitcoin?",
+    "What are the trending tokens?",
+    "What is a gas fee?",  // Conceptual
+  ];
+
+  for (const query of queries) {
+    console.log('\nTesting query:', query);
+    try {
+      const result = await orchestrator.processQuery(query);
+      console.log('Result:', JSON.stringify(result, null, 2));
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  }
+}
+
+testOrchestrator().catch(console.error);

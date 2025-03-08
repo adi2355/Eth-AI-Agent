@@ -9,7 +9,10 @@ export type IntentType =
   | 'SECURITY'
   | 'CONCEPTUAL'
   | 'HYBRID'
-  | 'NEEDS_CONTEXT';
+  | 'NEEDS_CONTEXT'
+  | 'DEPLOY_CONTRACT'
+  | 'TRANSFER_TOKENS'
+  | 'CONNECT_WALLET';
 
 // Market data types expanded
 export type MarketDataType = 
@@ -145,6 +148,16 @@ export interface RobustAnalysis {
     marketIndicators: string[];
     conceptualIndicators: string[];
     webSearchContext: WebSearchContext;
+    detectedEntities?: string[];
+    entityParams?: {
+      name?: string;
+      symbol?: string;
+      initialSupply?: string;
+      [key: string]: any;
+    };
+    recipient?: string;
+    amount?: string;
+    tokenAddress?: string;
   };
   dataRequirements: DataRequirements;
 }
@@ -197,6 +210,7 @@ export interface AggregatorSpec {
     news?: any;
     regulatory?: any;
     security?: any;
+    blockchain?: any;
   };
   fallback: {
     coingecko?: any;
