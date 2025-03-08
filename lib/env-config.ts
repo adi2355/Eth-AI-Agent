@@ -24,14 +24,17 @@ function validateEnv(): EnvConfig {
     varName => !process.env[varName]
   );
 
-  if (missingVars.length > 0) {
+  // In development mode, use placeholder values for missing variables
+  const isDev = process.env.NODE_ENV === 'development';
+  
+  if (missingVars.length > 0 && !isDev) {
     throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
   }
 
   return {
-    COINGECKO_API_KEY: process.env.COINGECKO_API_KEY!,
-    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY!,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+    COINGECKO_API_KEY: process.env.COINGECKO_API_KEY || (isDev ? 'development_key' : ''),
+    COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY || (isDev ? 'development_key' : ''),
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || (isDev ? 'development_key' : ''),
     NODE_ENV: process.env.NODE_ENV || 'development',
     API_RATE_LIMITS: {
       COINGECKO: parseInt(process.env.COINGECKO_RATE_LIMIT || '50'),
