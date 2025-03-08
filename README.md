@@ -371,46 +371,121 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
 
 ## 🏗️ Architecture
 
-<div align="center">```
-┌─────────────────────────────────────┐
-│  User Interface (Next.js + React)   │
-│       (Chat, Wallet, Transfers)     │
-└───────────────────┬─────────────────┘
-                    │
-┌───────────────────▼─────────────────┐
-│            API Routes               │
-│    (/api/chat, /api/blockchain)     │
-└───────────────────┬─────────────────┘
-                    │
-┌───────────────────▼─────────────────┐
-│     Agent Orchestrator (lib/)       │
-│       - Intent Analysis (OpenAI)    │
-│       - Data Aggregation            │
-│       - Blockchain Orchestration    │
-│       - Response Generation         │
-└──┬─────────────┬──────────────┬─────┘
-   │             │              │
-┌──▼────┐    ┌───▼───┐     ┌────▼─────┐
-│Intent │    │ Data  │     │Blockchain│
-│Analysis│   │Aggregator│  │Orchestratr│
-└──┬────┘    └───┬───┘     └────┬─────┘
-   │             │              │
-   │         ┌───▼───┐     ┌────▼─────┐
-   └────────►│Response│     │Session   │
-             │Generator│    │Manager   │
-             └───────┘     └────┬─────┘
-                                │
-                           ┌────▼─────┐
-                           │Transaction│
-                           │Agents     │
-                           └────┬─────┘
-                                │
-                           ┌────▼─────┐
-                           │Blockchain │
-                           │(Ethereum) │
-                           └───────────┘
+```<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <!-- Styles -->
+  <defs>
+    <style>
+      .component {
+        fill: #f0f5ff;
+        stroke: #3b82f6;
+        stroke-width: 2;
+        rx: 5;
+        ry: 5;
+      }
+      .sub-component {
+        fill: #e5e7eb;
+        stroke: #6b7280;
+        stroke-width: 1.5;
+        rx: 5;
+        ry: 5;
+      }
+      .arrow {
+        stroke: #4b5563;
+        stroke-width: 2;
+        fill: none;
+        marker-end: url(#arrowhead);
+      }
+      .label {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        font-size: 14px;
+        fill: #1f2937;
+        text-anchor: middle;
+      }
+      .sublabel {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        font-size: 12px;
+        fill: #4b5563;
+        text-anchor: middle;
+      }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
+    </marker>
+  </defs>
+
+  <!-- UI Layer -->
+  <rect x="250" y="50" width="300" height="60" class="component" />
+  <text x="400" y="80" class="label">User Interface (Next.js + React)</text>
+  <text x="400" y="100" class="sublabel">(Chat, Wallet, Transfers)</text>
+
+  <!-- API Routes -->
+  <rect x="250" y="150" width="300" height="60" class="component" />
+  <text x="400" y="180" class="label">API Routes</text>
+  <text x="400" y="200" class="sublabel">(/api/chat, /api/blockchain)</text>
+
+  <!-- Agent Orchestrator -->
+  <rect x="200" y="250" width="400" height="100" class="component" />
+  <text x="400" y="275" class="label">Agent Orchestrator (lib/)</text>
+  <text x="400" y="295" class="sublabel">- Intent Analysis (OpenAI)</text>
+  <text x="400" y="315" class="sublabel">- Data Aggregation</text>
+  <text x="400" y="335" class="sublabel">- Blockchain Orchestration</text>
+
+  <!-- Sub-Components -->
+  <rect x="150" y="400" width="120" height="60" class="sub-component" />
+  <text x="210" y="435" class="label">Intent Analysis</text>
+
+  <rect x="340" y="400" width="120" height="60" class="sub-component" />
+  <text x="400" y="435" class="label">Data Aggregator</text>
+
+  <rect x="530" y="400" width="120" height="60" class="sub-component" />
+  <text x="590" y="435" class="label">Blockchain</text>
+  <text x="590" y="455" class="sublabel">Orchestrator</text>
+
+  <rect x="340" y="500" width="120" height="60" class="sub-component" />
+  <text x="400" y="535" class="label">Response</text>
+  <text x="400" y="555" class="sublabel">Generator</text>
+
+  <rect x="530" y="500" width="120" height="60" class="sub-component" />
+  <text x="590" y="535" class="label">Session</text>
+  <text x="590" y="555" class="sublabel">Manager</text>
+
+  <rect x="530" y="600" width="120" height="60" class="sub-component" />
+  <text x="590" y="635" class="label">Transaction</text>
+  <text x="590" y="655" class="sublabel">Agents</text>
+
+  <rect x="530" y="700" width="120" height="60" class="sub-component" />
+  <text x="590" y="735" class="label">Blockchain</text>
+  <text x="590" y="755" class="sublabel">(Ethereum)</text>
+
+  <!-- Connections -->
+  <!-- UI to API -->
+  <path d="M 400 110 L 400 150" class="arrow" />
+  
+  <!-- API to Orchestrator -->
+  <path d="M 400 210 L 400 250" class="arrow" />
+  
+  <!-- Orchestrator to Sub-components -->
+  <path d="M 300 350 L 210 400" class="arrow" />
+  <path d="M 400 350 L 400 400" class="arrow" />
+  <path d="M 500 350 L 590 400" class="arrow" />
+  
+  <!-- Intent Analysis to Response Generator -->
+  <path d="M 210 460 L 210 530 L 340 530" class="arrow" />
+  
+  <!-- Data Aggregator to Response Generator -->
+  <path d="M 400 460 L 400 500" class="arrow" />
+  
+  <!-- Blockchain Orchestrator to Session Manager -->
+  <path d="M 590 460 L 590 500" class="arrow" />
+  
+  <!-- Session Manager to Transaction Agents -->
+  <path d="M 590 560 L 590 600" class="arrow" />
+  
+  <!-- Transaction Agents to Blockchain -->
+  <path d="M 590 660 L 590 700" class="arrow" />
+</svg>
 ```
-</div>
+
 ### High-Level Flow
 
 1. **User Query → /api/chat**
