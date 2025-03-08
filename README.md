@@ -1,5 +1,120 @@
 # Blockchain AI Agent
+# Blockchain AI Agent
 
+> An advanced conversational assistant that seamlessly integrates AI-driven natural language processing with Ethereum blockchain capabilities
+
+## Table of Contents
+
+1. [Project Overview](#project-overview)  
+2. [Key Features](#key-features)  
+3. [Project Goals](#project-goals)  
+   - [Primary Objectives](#primary-objectives)  
+   - [Problems Addressed](#problems-addressed)  
+4. [Architecture & Implementation](#architecture--implementation)  
+   - [Data Structures](#data-structures)  
+   - [Conversation Flow](#conversation-flow)  
+   - [Blockchain Operations](#blockchain-operations)  
+   - [Agent Orchestration](#agent-orchestration)  
+   - [Challenges & Fixes](#challenges--fixes)  
+5. [Key Architectural Decisions](#key-architectural-decisions)  
+6. [Installation & Setup](#installation--setup)  
+   - [Environment Configuration](#environment-configuration)  
+   - [Development Commands](#development-commands)  
+7. [Usage](#usage)  
+   - [Chat Interface](#chat-interface)  
+   - [Blockchain Testing](#blockchain-testing)  
+8. [Future Work](#future-work)  
+9. [License](#license)
+
+---
+
+## Project Overview
+
+The **Blockchain AI Agent** is a Next.js-based application that merges **blockchain functionality** with an **AI-powered conversational assistant**. It leverages:
+
+- **OpenAI** for natural language understanding and intent classification  
+- **Ethereum (Viem/Wagmi)** for blockchain interactions (deploying contracts, token transfers, etc.)  
+- **External APIs** (CoinGecko, CoinMarketCap) for real-time cryptocurrency market data
+
+This microservices-inspired architecture encapsulates specialized agents for intent analysis, data aggregation, blockchain operations, and conversation context management.
+
+---
+
+## Key Features
+
+1. **Real-Time Cryptocurrency Data**  
+   - Fetches live prices, market cap, trading volumes from CoinGecko or CoinMarketCap
+
+2. **Smart Contract Deployment**  
+   - Deploys common contract templates (e.g., ERC20, NFT collections) via simple conversational commands
+
+3. **Token Transfers & Wallet Integration**  
+   - Connects to wallets (MetaMask or mock) to send ETH or tokens directly from chat
+
+4. **Contextual Conversation**  
+   - Remembers user preferences (favorite tokens, technical level) for personalized responses
+
+5. **Transaction Monitoring**  
+   - Tracks the status of blockchain transactions (pending, success, failed) with real-time updates
+
+6. **Secure & Resilient**  
+   - Fallback mechanisms for rate-limited APIs, robust error handling, session-based wallet management
+
+---
+
+## Project Goals
+
+### Primary Objectives
+
+- Deliver a **blockchain-focused AI assistant** for both novices and advanced users  
+- Provide **real-time cryptocurrency market data** and analytics  
+- Simplify **smart contract deployment** and **token transfers** through natural language  
+- Maintain coherent, **contextual conversations** with user preference learning  
+
+### Problems Addressed
+
+- Reduces complexity of **blockchain interactions** for non-technical users  
+- Consolidates crypto data from multiple external sources  
+- Lowers barriers for **smart contract deployment**  
+- Maintains conversation context across multiple queries  
+- Provides **transaction monitoring** in a single interface  
+
+---
+
+## Architecture & Implementation
+
+### Data Structures
+
+#### Intent Classification
+
+```typescript
+export interface RobustAnalysis {
+  originalContext: OriginalContext;
+  classification: {
+    primaryIntent: IntentType;
+    confidence: number;
+    needsApiCall: boolean;
+    ambiguityLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+    requiresWebSearch: boolean;
+  };
+  queryAnalysis: {
+    sanitizedQuery: string;
+    detectedTokens: string[];
+    comparisonRequest: ComparisonRequest;
+    detectedIntents: string[];
+    timeContext: TimeFrame;
+    marketIndicators: string[];
+    conceptualIndicators: string[];
+    webSearchContext: WebSearchContext;
+    detectedEntities?: string[];
+    entityParams?: object;
+    recipient?: string;
+    amount?: string;
+    tokenAddress?: string;
+  };
+  dataRequirements: DataRequirements;
+}
+```
 ## 1. Overview
 
 The Blockchain AI Agent is a next-generation application merging natural language processing (NLP) with Ethereum blockchain functionality. It is intended to make blockchain interactions and cryptocurrency data retrieval as simple as chatting with a knowledgeable assistant.
