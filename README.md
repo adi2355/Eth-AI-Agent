@@ -34,6 +34,7 @@ The Blockchain AI Agent is a next-generation application merging natural languag
 - Transfer tokens
 - Monitor transaction statuses
 - Maintain contextual conversations
+  
 
 ### How It Addresses Common Pain Points
 
@@ -53,40 +54,6 @@ The agent uses advanced NLP to understand user queries, categorize intents, and 
 - **Confidence Scoring**: Evaluates the certainty of interpretations and asks for clarification when needed
 - **Ambiguity Resolution**: Handles unclear inputs by determining the most likely intent
 
-```typescript
-// From lib/agents/intent.ts
-export async function analyzeUserQuery(input: Agent1Input): Promise<RobustAnalysis> {
-  try {
-    // Preprocess the query for consistent formatting
-    const preprocessingSteps = preprocessQuery(input.query);
-    const metadata = extractMetadata(input.query, preprocessingSteps);
-
-    // Send to OpenAI for intent classification
-    const completion = await client.createChatCompletion({
-      model: OPENAI_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: preprocessingSteps[preprocessingSteps.length - 1].output }
-      ],
-      temperature: 0.1,
-      max_tokens: 1000,
-    });
-    
-    // Process and validate the response
-    const parsedResponse = validateLLMResponse(response);
-    
-    // Return the structured analysis
-    return {
-      originalContext: { /* ... */ },
-      classification: parsedResponse.classification,
-      queryAnalysis: parsedResponse.queryAnalysis,
-      dataRequirements: parsedResponse.dataRequirements
-    };
-  } catch (error) {
-    // Error handling...
-  }
-}
-```
 
 ### 2. Smart Contract Deployment
 
@@ -97,39 +64,6 @@ Deploy smart contracts directly through conversation, with built-in templating, 
 - **Real-time Compilation**: On-the-fly Solidity compilation with detailed error feedback
 - **Security Validation**: Automatic checks for common vulnerabilities like reentrancy, tx.origin misuse, etc.
 
-```typescript
-// From lib/agents/deployment/contract-deployment-agent.ts
-async deployContract(walletServiceInstance: WalletIntegrationService, 
-                     params: DeploymentParams): Promise<DeploymentResult> {
-  try {
-    // Find or validate template
-    const template = params.templateId ? 
-      await this.findTemplate(params.templateId) : undefined;
-    
-    // Get contract source code
-    const source = await this.getContractSource(params);
-    
-    // Compile the contract
-    const compilation = await compile(source);
-    
-    // Validate for security issues
-    const securityCheck = validateContract(abi, bytecode);
-    if (!securityCheck.valid) {
-      throw new Error(`Contract security check failed: ${securityCheck.issues.map(i => i.title).join(', ')}`);
-    }
-    
-    // Deploy the contract
-    const txHash = await walletServiceInstance.sendTransaction(txOptions);
-    
-    // Wait for confirmation in the background
-    this.waitForDeployment(txHash, params.verify || false, walletServiceInstance);
-    
-    return deploymentResult;
-  } catch (error) {
-    // Error handling...
-  }
-}
-```
 
 ### 3. Token Transfers
 
@@ -140,42 +74,6 @@ Send ETH or ERC20 tokens with simple natural language commands, complete with tr
 - **Transaction Tracking**: Monitor transaction status from submission to confirmation
 - **Error Prevention**: Validation to prevent common mistakes like invalid addresses or insufficient funds
 
-```typescript
-// Example conversation flow for token transfer
-// User: "Send 0.5 ETH to 0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
-// Agent identifies intent as TRANSFER_TOKENS and extracts parameters
-// Agent then calls:
-
-async transferTokens(walletServiceInstance: WalletIntegrationService,
-                    params: TransferParams): Promise<TransferResult> {
-  // Validate wallet and parameters
-  if (!walletServiceInstance.isConnected()) {
-    throw new Error("Wallet not connected");
-  }
-  
-  // Prepare transaction options
-  const txOptions: any = {
-    to: params.to,
-  };
-  
-  if (isEthTransfer) {
-    // ETH transfer
-    amountInWei = WalletIntegrationService.parseEther(params.amount);
-    txOptions.value = amountInWei;
-  } else {
-    // Token transfer
-    // Encode the token transfer function call
-  }
-  
-  // Send transaction and monitor status
-  const hash = await walletServiceInstance.sendTransaction(txOptions);
-  
-  // Background confirmation tracking
-  this.waitForTransfer(hash, walletServiceInstance);
-  
-  return transferResult;
-}
-```
 
 ### 4. Persistent Wallet Connections
 
@@ -186,41 +84,6 @@ Maintain blockchain wallet connections across conversations with sophisticated s
 - **Environment Adaptability**: Support browser-based wallets (MetaMask) and server-side simulation
 - **Mock Integration**: Testing-friendly mock wallet implementation with consistent behavior
 
-```typescript
-// From lib/blockchain/session-manager.ts
-class BlockchainSessionManager {
-  private sessions: Map<string, SessionData> = new Map();
-  
-  // Get wallet service for a session
-  getWalletService(sessionId: string): WalletIntegrationService | undefined {
-    const normalizedSessionId = this.normalizeSessionId(sessionId);
-    const session = this.sessions.get(normalizedSessionId);
-    
-    if (session) {
-      // Update last active time
-      session.lastActive = Date.now();
-      return session.walletService;
-    }
-    
-    return undefined;
-  }
-  
-  // Connect a wallet for a session
-  async connectWallet(sessionId: string, provider: string, 
-                     chainId?: number): Promise<`0x${string}`> {
-    // Create wallet service
-    const walletService = new WalletIntegrationService();
-    
-    // Connect to wallet provider
-    const address = await walletService.connect(provider as WalletType);
-    
-    // Store the connection for future use
-    this.storeConnection(sessionId, walletService, address, chainId);
-    
-    return address;
-  }
-}
-```
 
 ### 5. Transaction Monitoring
 
@@ -231,39 +94,6 @@ Track blockchain transactions through their entire lifecycle with real-time stat
 - **Unified Interface**: Common API for both token transfers and contract deployments
 - **Transaction History**: Persistent record of past transactions with detailed status information
 
-```typescript
-// From lib/api/transaction-api.ts
-export const transactionApi = {
-  // Get all transactions
-  getAllTransactions(): TransactionRecord[] {
-    // Fetch transfers from TokenTransferAgent
-    const transfers = TokenTransferAgent.getAllTransfers();
-    
-    // Fetch deployments from ContractDeploymentAgent
-    const deployments = ContractDeploymentAgent.getAllDeployments();
-    
-    // Convert to unified format and return
-    return [...transfers.map(tx => ({
-      transactionHash: tx.transactionHash,
-      status: tx.status,
-      // additional fields...
-    })), ...deployments.map(tx => ({
-      transactionHash: tx.transactionHash,
-      status: tx.deploymentStatus || 'pending',
-      // additional fields...
-    }))].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  },
-  
-  // Transaction events
-  notifyTransactionAdded(transaction: TransactionRecord): void {
-    transactionEvents.emit('transaction:added', transaction);
-  },
-  
-  notifyTransactionUpdated(transaction: TransactionRecord): void {
-    transactionEvents.emit('transaction:updated', transaction);
-  }
-}
-```
 
 ### 6. Conversation Context & Personalization
 
@@ -274,50 +104,6 @@ The agent maintains conversation history and user preferences for context-aware 
 - **Context Analysis**: Evaluates conversation flow for coherence and continuity
 - **Personalized Responses**: Adapts responses based on user's previous interactions and knowledge level
 
-```typescript
-// From lib/conversation-store.ts
-export class ConversationStore {
-  private static conversations = new Map<string, ChatMessage[]>();
-  private static metadata = new Map<string, ConversationMetadata>();
-  
-  // Add a message with metadata
-  static addMessage(sessionId: string, message: Omit<ChatMessage, 'id'>): void {
-    const convo = this.getMessages(sessionId);
-    const messageWithId: ChatMessage = {
-      ...message,
-      id: uuidv4(),
-      timestamp: message.timestamp || Date.now()
-    };
-
-    convo.push(messageWithId);
-
-    // Update metadata
-    const metadata = this.getMetadata(sessionId);
-    metadata.lastActive = Date.now();
-    metadata.messageCount++;
-
-    // Update topic metadata & user preferences
-    if (message.metadata?.intent) {
-      this.updateTopicMetadata(metadata, message);
-    }
-    if (message.metadata?.tokens) {
-      this.updateUserPreferences(metadata, message);
-    }
-    
-    // Calculate conversation continuity
-    this.updateContinuityScore(metadata, convo);
-  }
-  
-  // Get user's favorite tokens
-  static getFavoriteTokens(sessionId: string, limit = 5): string[] {
-    const prefs = this.getUserPreferences(sessionId);
-    return Array.from(prefs.favoriteTokens.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, limit)
-      .map(([token]) => token);
-  }
-}
-```
 
 ### 7. Error Handling & API Fallbacks
 
@@ -328,46 +114,7 @@ Robust handling of errors with graceful fallbacks and retry mechanisms.
 - **Graceful Degradation**: Fallback mechanisms to provide partial results when possible
 - **Detailed Error Reporting**: User-friendly error messages with specific recovery suggestions
 
-```typescript
-// From lib/token-data.ts
-export async function getTokenDetails(query: string): Promise<TokenInfo | null> {
-  try {
-    // First search for the token
-    const tokenMatch = await searchToken(query);
-    if (!tokenMatch) {
-      return null;
-    }
 
-    // Try CoinGecko first
-    if (canCallCoinGecko()) {
-      try {
-        const response = await fetchCoinGecko(
-          `/coins/${tokenMatch.id}?localization=false&tickers=false&community_data=false&developer_data=false`
-        );
-        // Process and return data...
-      } catch (error) {
-        console.warn('CoinGecko details fetch failed:', error);
-      }
-    }
-    
-    // Fallback to CoinMarketCap
-    if (canCallCoinMarketCap()) {
-      try {
-        const data = await fetchCoinMarketCap(
-          `/cryptocurrency/quotes/latest?symbol=${tokenMatch.symbol}`
-        );
-        // Process and return data...
-      } catch (error) {
-        console.warn('CoinMarketCap details fetch failed:', error);
-      }
-    }
-
-    throw new Error('Failed to fetch token details from all available sources');
-  } catch (error) {
-    // Error handling with specific messages...
-  }
-}
-```
 
 ## 🏗️ Architecture
 
@@ -752,14 +499,11 @@ For testing in server environments:
 if (typeof window === 'undefined') {
   // Use a fixed address for server-side connections
   const serverAddress = '0x87a89B578e769F172440581A4E3DE6823dd116bB' as `0x${string}`;
-  
-  // Create a mock wallet service
   const walletService = new WalletIntegrationService();
   walletService.setMockAddress(serverAddress);
   
   // Register in session manager
   this.storeConnection(sessionId, walletService, serverAddress);
-  
   return serverAddress;
 }
 ```
@@ -813,32 +557,13 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
     if (canCallCoinGecko()) {
       try {
         const response = await fetchCoinGecko(/* ... */);
-        // Process and return data...
-        recordCoinGeckoCall();
-        return tokenInfo;
-      } catch (error) {
-        console.warn('CoinGecko details fetch failed:', error);
-      }
-    }
+        // Process and return data..
     
     // Fallback to CoinMarketCap
     if (canCallCoinMarketCap()) {
       try {
         const data = await fetchCoinMarketCap(/* ... */);
-        // Process and return data...
-        recordCoinMarketCapCall();
-        return tokenInfo;
-      } catch (error) {
-        console.warn('CoinMarketCap details fetch failed:', error);
-      }
-    }
-    
-    // Both services failed
-    throw new Error('Failed to fetch token details from all available sources');
-  } catch (error) {
-    // Error handling...
-  }
-}
+
 ```
 
 ### Custom Configuration
