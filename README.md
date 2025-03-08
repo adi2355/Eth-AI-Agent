@@ -371,7 +371,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
 
 ## 🏗️ Architecture
 
-<div align="center"></p>```
+<div align="center">```
 ┌─────────────────────────────────────┐
 │  User Interface (Next.js + React)   │
 │       (Chat, Wallet, Transfers)     │
@@ -410,7 +410,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
                            │(Ethereum) │
                            └───────────┘
 ```
-</p></div>
+</div>
 ### High-Level Flow
 
 1. **User Query → /api/chat**
