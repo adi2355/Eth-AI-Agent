@@ -28,12 +28,19 @@ export interface TransactionOptions {
 export class WalletIntegrationService {
   private walletClient: any = null;
   private connectedChainId: number | null = null;
-  private connectedAddress: `0x${string}` | null = null;
+  private connectedAddress: `0x${string}` = '0x0000000000000000000000000000000000000000';
   private pendingTransactions = new Map<string, any>();
 
   // Connect to a wallet
   async connect(options: WalletConnectionOptions): Promise<`0x${string}`> {
     try {
+      // Check if we're in a server environment
+      if (typeof window === 'undefined') {
+        console.log('Server-side wallet connection requested, returning mock address');
+        // Return a mock address for server-side rendering
+        return '0x0000000000000000000000000000000000000000';
+      }
+      
       const chainId = options.chainId || 1; // Default to Ethereum mainnet
       let chain;
       
@@ -55,7 +62,7 @@ export class WalletIntegrationService {
       // Connect based on wallet type
       switch (options.type) {
         case 'metamask':
-          if (typeof window === 'undefined' || !window.ethereum) {
+          if (!window.ethereum) {
             throw new Error('MetaMask not detected in browser');
           }
           
@@ -234,7 +241,7 @@ export class WalletIntegrationService {
   // Disconnect wallet
   disconnect(): void {
     this.walletClient = null;
-    this.connectedAddress = null;
+    this.connectedAddress = '0x0000000000000000000000000000000000000000';
     this.connectedChainId = null;
     console.log('Wallet disconnected');
   }
