@@ -1,4 +1,4 @@
-Ethereum AI Agent
+# Ethereum AI Agent
 
 <div align="center">
 
