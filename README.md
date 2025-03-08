@@ -371,7 +371,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
 
 ## 🏗️ Architecture
 
-```<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
   <!-- Styles -->
   <defs>
     <style>
@@ -484,7 +484,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
   <!-- Transaction Agents to Blockchain -->
   <path d="M 590 660 L 590 700" class="arrow" />
 </svg>
-```
+
 
 ### High-Level Flow
 
