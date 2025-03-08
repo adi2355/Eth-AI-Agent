@@ -4,6 +4,7 @@ import { DeploymentResult, DeploymentParams } from '../agents/deployment/contrac
 import { TransferResult, TransferParams } from '../agents/transaction/token-transfer-agent';
 import { ContractTemplate } from '../agents/deployment/contract-templates';
 import { WalletConnectionOptions } from '../blockchain/wallet-integration';
+import { WalletIntegrationService } from '../blockchain/wallet-integration';
 
 /**
  * Blockchain API Service
@@ -42,6 +43,20 @@ export class BlockchainApiService {
       type: provider as any // Cast to any as a temporary solution
     };
     
+    try {
+      // First try to connect directly in the browser
+      if (typeof window !== 'undefined') {
+        // We're in the browser, try to connect directly
+        const walletService = new WalletIntegrationService();
+        const address = await walletService.connect(walletParams);
+        return address;
+      }
+    } catch (error) {
+      console.error('Browser wallet connection failed:', error);
+      // Fall through to server-side approach if browser connection fails
+    }
+    
+    // If we're not in the browser or direct connection failed, use the server API
     const result = await this.executeBlockchainAction({
       actionType: 'CONNECT_WALLET',
       walletParams
@@ -49,6 +64,11 @@ export class BlockchainApiService {
     
     if (!result.success) {
       throw new Error(result.error || 'Failed to connect wallet');
+    }
+    
+    // If the server indicates we need a browser connection, throw an appropriate error
+    if (result.data.needsBrowserConnection) {
+      throw new Error('Wallet connection requires a browser environment');
     }
     
     return result.data.address;
