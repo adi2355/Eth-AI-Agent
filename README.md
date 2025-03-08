@@ -371,8 +371,7 @@ export async function getTokenDetails(query: string): Promise<TokenInfo | null> 
 
 ## 🏗️ Architecture
 
-![System Architecture](Eth-AI-Agent
-/system-architecture.svg)
+![System Architecture](system-architecture.svg)
 
 
 ### High-Level Flow
