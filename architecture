@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="188.313 -198.938 654.073 780.992" xmlns:bx="https://boxy-svg.com">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#555"/>
+    </marker>
+    <bx:export>
+      <bx:file format="svg" href="#object-0"/>
+    </bx:export>
+  </defs>
+  <rect x="425.487" y="-173.71" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="500.487" y="-158.71" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 208.719px 32.5px; text-anchor: middle;">User (Next.js + React)</text>
+  <text x="500.487" y="-138.71" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 188.172px 42.5px; text-anchor: middle;">Chat interface - user interaction</text>
+  <rect x="425.487" y="-93.709" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="500.487" y="-78.709" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 180.469px 72.5px; text-anchor: middle;">API Routes</text>
+  <text x="500.487" y="-58.709" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 185.609px 82.5px; text-anchor: middle;">Endpoints for client requests</text>
+  <rect x="425.487" y="-13.709" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="500.487" y="1.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 198.453px 112.5px; text-anchor: middle;">Agent Orchestrator </text>
+  <text x="500.487" y="21.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 177.906px 122.5px; text-anchor: middle;">Controls overall flow</text>
+  <rect x="425.487" y="66.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="500.487" y="81.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 198.453px 152.5px; text-anchor: middle;">Intent Analysis </text>
+  <text x="500.487" y="101.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 180.469px 162.5px; text-anchor: middle;">Classifies user queries</text>
+  <rect x="275.487" y="156.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="350.487" y="171.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 113.172px 197.5px; text-anchor: middle;">Data Aggregator</text>
+  <text x="350.487" y="191.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 110.609px 207.5px; text-anchor: middle;">Fetches market data - APIs</text>
+  <rect x="593.403" y="154.52" width="162.397" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="675.487" y="171.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 285.953px 197.5px; text-anchor: middle;">Blockchain Orchestrator</text>
+  <text x="675.487" y="191.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 273.109px 207.5px; text-anchor: middle;">Manages agent operations</text>
+  <rect x="275.487" y="236.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="350.487" y="251.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 108.047px 237.5px; text-anchor: middle;">External APIs</text>
+  <text x="350.487" y="271.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 113.172px 247.5px; text-anchor: middle;">Third-party market data sources</text>
+  <rect x="600.487" y="236.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="675.487" y="251.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 275.672px 237.5px; text-anchor: middle;">Session Manager</text>
+  <text x="675.487" y="271.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 273.109px 247.5px; text-anchor: middle;">Maintains wallet connections</text>
+  <rect x="600.487" y="316.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="675.487" y="331.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 278.25px 277.5px; text-anchor: middle;">Transaction Agents</text>
+  <text x="675.487" y="351.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 275.672px 287.5px; text-anchor: middle;">Executes transactions</text>
+  <rect x="600.487" y="396.291" width="150" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="675.487" y="411.291" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 283.375px 317.5px; text-anchor: middle;">Blockchain (Ethereum)</text>
+  <text x="675.487" y="431.291" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 273.109px 327.5px; text-anchor: middle;">Executes on-chain operations</text>
+  <rect x="336.319" y="396.291" width="231.181" height="50" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="455.452" y="412.472" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 175.812px 317.5px; text-anchor: middle;">Response Generator</text>
+  <text x="452.5" y="433.652" class="subtext" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 168.109px 327.5px; text-anchor: middle;" transform="matrix(0.977937, 0, 0, 1, 10.278537, -5.903188)" id="object-0">Creates response by combining on output <tspan x="452.5" dy="1em">​</tspan>from agent and original query</text>
+  <rect x="326.284" y="490.459" width="300" height="40" class="box" style="fill: rgb(255, 255, 255); rx: 5px; ry: 5px; stroke: rgb(51, 51, 51); stroke-width: 2px;"/>
+  <text x="470.381" y="508.097" class="text" style="white-space: pre; dominant-baseline: middle; font-family: sans-serif; font-size: 14px; line-height: 22.4px; perspective-origin: 180.469px 360px; text-anchor: middle;">User Output</text>
+  <line x1="500.487" y1="-123.71" x2="500.487" y2="-93.709" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="500.487" y1="-43.709" x2="500.487" y2="-13.709" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="500.487" y1="36.291" x2="500.487" y2="66.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <path d="M 500.487 116.291 L 500.487 136.291 L 350.487 136.291 L 350.487 156.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <text x="354.029" y="132.401" class="small-text" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 100.328px 187.5px; text-anchor: middle;">Fetch data intent</text>
+  <path d="M 500.487 116.291 L 500.487 396.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <text x="536.738" y="269.868" class="small-text" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 182.828px 240px; text-anchor: middle;" transform="matrix(1, 0, 0, 1, -28.3353, 10.035419)">Direct response <tspan x="536.7379760742188" dy="1em">​</tspan>intent</text>
+  <path d="M 500.487 116.291 L 500.487 136.291 L 675.487 136.291 L 675.487 156.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <text x="673.126" y="130.04" class="small-text" style="white-space: pre; fill: rgb(85, 85, 85); font-family: sans-serif; font-size: 10px; line-height: 16px; perspective-origin: 262.828px 187.5px; text-anchor: middle;">Transaction intent</text>
+  <line x1="350.487" y1="206.291" x2="350.487" y2="236.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <path d="M 350.487 286.291 L 350.487 393.547" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="675.487" y1="206.291" x2="675.487" y2="236.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="675.487" y1="286.291" x2="675.487" y2="316.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="675.487" y1="366.291" x2="675.487" y2="396.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <path d="M 500.723 341.881 L 500.487 341.291 L 500.487 396.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <path d="M 600.487 421.291 L 570.452 421.291" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <line x1="465.487" y1="446.291" x2="465.487" y2="488.097" class="arrow" style="fill: none; marker-end: url(&quot;#arrowhead&quot;); stroke: rgb(85, 85, 85); stroke-width: 1.5px;"/>
+  <text style="white-space: pre; fill: rgb(51, 51, 51); font-family: Arial, sans-serif; font-size: 28px;" x="564.935" y="330.513">   </text>
+  <text style="white-space: pre; fill: rgb(51, 51, 51); font-family: Arial, sans-serif; font-size: 28px;" x="795.159" y="374.197"> </text>
+  <text style="white-space: pre; fill: rgb(51, 51, 51); font-family: Arial, sans-serif; font-size: 28px;" x="557.851" y="313.394"> </text>
+  <text style="white-space: pre; fill: rgb(51, 51, 51); font-family: Arial, sans-serif; font-size: 28px;" x="792.208" y="367.703"> </text>
+</svg>
