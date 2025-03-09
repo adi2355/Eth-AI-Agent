@@ -121,7 +121,7 @@ Robust handling of errors with graceful fallbacks and retry mechanisms.
 
 ## 🏗️ Architecture
 
-![System Architecture](system-architecture.svg)
+![System Architecture](achitecture.pdf)
 
 
 ### High-Level Flow
