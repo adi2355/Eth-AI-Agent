@@ -1,8 +1,5 @@
 <div align="center">
   <img src="./terminal-top-panel.svg" alt="Terminal Top Panel" width="100%" />
-
-
-  <img src="./system-architecturenew.svg" alt="Ethereum AI Agent Architecture" width="100%" />
 </div>
 
 <br>
@@ -85,6 +82,12 @@ Smart contract deployment passes through a security validator that checks for re
 ---
 
 ## Critical Subsystems
+
+<div align="center">
+
+
+  <img src="./system-architecturenew.svg" alt="Ethereum AI Agent Architecture" width="100%" />
+</div>
 
 ### AI Intent Pipeline
 
