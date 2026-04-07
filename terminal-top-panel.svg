@@ -98,7 +98,7 @@
     letter-spacing="0"
     fill="#f3c57c"
   >
-    &gt; System Architecture
+    &gt; Agent Orchestration
   </text>
 
   <text
@@ -109,7 +109,7 @@
     letter-spacing="0.2"
     fill="#94a0ac"
   >
-    AI-Powered · Ethereum Blockchain Agent
+    NLP Intent Pipeline · Ethereum Execution Layer
   </text>
 
   <rect x="6" y="144" width="1188" height="16" fill="url(#bottomBlend)" />
